@@ -1,0 +1,318 @@
+# CLAUDE.md — MoneyLens Personal Finance Tracker
+
+## Project Overview
+
+MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth — without bank linking or paid APIs. Transactions come in mainly as **CSV files downloaded from the bank's website**; balances and mortgage payments can also be read from **statement PDFs**. Everything is stored locally in the browser.
+
+Built-in support: CSV profiles for **US Bank checking, American Express, and Discover**; statement PDF parsers for **Lakeview/LoanCare** and **Rocket Mortgage** (mortgage payments) and **US Bank** (account balances). Other banks work through manual column mapping.
+
+**This repo is public. Never commit personal data** — see [Personal Data](#personal-data).
+
+## Tech Stack
+
+- **Framework:** React 18 with Vite 6
+- **Language:** JavaScript (JSX), no TypeScript unless asked
+- **Styling:** single global `src/App.css` with CSS custom properties (dark theme)
+- **Storage:** localStorage, one key (`moneylens-data`), versioned and migrated on load
+- **Routing:** React Router v6 (`BrowserRouter`, v7 future flags on); pages are lazy-loaded
+- **Charts:** Recharts
+- **CSV parsing:** PapaParse
+- **PDF parsing:** pdfjs-dist (loaded on demand — only the Mortgage and Net Worth pages import it)
+- **Tests:** Vitest (unit tests for `src/utils`, run with `TZ=Etc/GMT+10` (UTC−10) so UTC-vs-local date bugs show up)
+- **Lint:** ESLint 9 flat config with `react-hooks` and `react-refresh`
+- **No backend** — fully client-side; deploy as a static site (Vercel/Netlify)
+
+## Commands
+
+```bash
+npm install        # Install deps
+npm run dev        # Start dev server
+npm test           # Run unit tests once (npm run test:watch to watch)
+npm run lint       # ESLint
+npm run build      # Production build
+```
+
+Run `npm run lint && npm test && npm run build` before calling a change done.
+
+## Design Direction
+
+- **Theme:** Dark UI (`#1A1A1F` background, `#222228` cards, `#E8E4DD` text)
+- **Accent colors:** Warm gradient (`#E8927C` coral → `#C97CE8` purple) for primary actions
+- **Category colors:** each spending category has a unique color (table below)
+- **Typography:** DM Sans (Google Fonts). No generic system fonts.
+- **Tone:** Clean, modern, slightly warm. Not corporate. Premium personal tool.
+- **Rounded corners:** 10-14px on cards and buttons
+- **Animations:** subtle transitions on bar charts, tab switches, modal open/close
+- **Translucent colors in CSS:** use `color-mix(in srgb, var(--x) 13%, transparent)`. Appending hex alpha to a variable (`var(--x)22`) is invalid CSS and silently drops the whole declaration. (Appending alpha to a hex *string* in JS, e.g. `cat.color + '22'`, is fine.)
+
+## How Money Is Counted (read this first)
+
+All rules live in `src/utils/transactions.js` — use these helpers, never re-implement the filters inline:
+
+| Helper | Rule |
+|---|---|
+| `isCredit(tx)` | `tx.type === 'credit'` (manual transactions have no `type` → debits) |
+| `isTransfer(tx)` | `tx.category === 'transfers'` |
+| `isIncome(tx)` | credit **and not** a transfer |
+| `isSpending(tx)` | not a credit **and not** a transfer |
+
+- **Transfers** are credit card payments and moves between the user's own accounts. A card payment appears twice — as a debit on checking ("AMEX EPAYMENT") and a credit on the card ("MOBILE PAYMENT - THANK YOU") — so it must be neither income nor spending.
+- **Income is derived** from credit transactions; there is no manual income setting.
+- **Manual subscriptions are informational.** Imported bank transactions already include those charges, so they're never added to spending totals, the dashboard chart, or "Remaining".
+- List pages show everything (Spending lists transfer debits, Income lists transfer credits) so items can be found and recategorized, but totals exclude transfers.
+
+## Pages
+
+| Route | Page | What it does |
+|---|---|---|
+| `/dashboard` | Dashboard | Current month: income, spending, remaining (= income − spending); recurring-costs card (manual subscriptions, informational); spending-by-category bar chart with budget markers; 5 most recent transactions (read-only) |
+| `/subscriptions` | Subscriptions | Manual subscriptions (add/edit/delete, normalized monthly cost) plus "Detected from Imports": imported transactions with `isSubscription`, grouped by merchant |
+| `/spending` | Spending | Debits by month with category and subscription filters; add/edit/delete; header total excludes transfers unless the Transfers filter is selected |
+| `/income` | Income | Credits by month; edit/delete; header splits income from transfers-in (not counted) |
+| `/trends` | Trends | Monthly or daily (cumulative) line charts: spending by category, income, net |
+| `/budgets` | Budgets | Monthly cap per category with progress bars (red when over); shows categories with a budget or spending |
+| `/mortgage` | Mortgage | Properties, loans, payments; amortization vs. actual; extra-payment impact; combined view across a refi; statement PDF import; JSON import/export; delete payments/loans/properties |
+| `/net-worth` | Net Worth | Accounts (assets/liabilities) with balance snapshots; live balances for accounts linked to a bank profile; mortgage loans and properties included automatically; US Bank statement PDF import |
+| `/import` | Import | CSV import wizard (below) |
+| `/settings` | Settings | Delete saved bank profiles; edit category keywords; re-categorize imported transactions; export/import JSON; reset |
+
+## CSV Import (`/import`) — primary data entry
+
+1. **Upload** — drop one or more `.csv`/`.tsv` files. Each is parsed immediately; its bank profile is auto-detected from the filename (`detectProfileFromFilename` in `constants/bankProfiles.js`) or chosen from a dropdown ("New Bank (manual mapping)" for unknown banks).
+2. **Map Columns** — only for files without a profile, one at a time. Columns are pre-guessed from header names; date format is detected from the mapped date column (DD/MM is chosen when a first number exceeds 12). Optional "Save as bank profile" name makes it reusable and tags its transactions with the new profile ID.
+3. **Preview** — rows are auto-categorized (see keywords) and tagged `isSubscription`; each row has a category dropdown and a skip checkbox; unparseable rows are red. **Suspected duplicates** (same date + amount + description as an existing transaction) start out skipped and can be included per row.
+4. **Confirm** — "Import duplicates anyway" / "Skip all duplicates"; lists profiles that will be saved. Importing also auto-creates a linked Net Worth account the first time a built-in bank is imported (`PROFILE_ACCOUNT_MAP`). Redirects to `/spending`.
+
+Credits and debits are both imported (credits become income unless categorized as transfers).
+
+Wizard state rule: when a handler both updates `fileEntries` and builds the preview, build from the new array you just computed — never from state captured by the render (that was a real bug: manual mappings produced 0 rows).
+
+### Bank profiles
+
+Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILES`, marked `builtin: true`); user-saved ones in `data.bankProfiles`. The two are merged, user entries winning.
+
+```json
+{
+  "name": "US Bank Checking",
+  "builtin": true,
+  "dateColumn": "Date",
+  "descriptionColumn": "Name",
+  "amountColumn": "Amount",
+  "amountFormat": "negative_is_debit",
+  "dateFormat": "YYYY-MM-DD",
+  "categoryColumn": null,
+  "debitColumn": null,
+  "creditColumn": null,
+  "skipHeaderRows": 0
+}
+```
+
+`amountFormat`: `negative_is_debit` (US Bank), `positive_is_debit` (Amex, Discover), or `two_columns` (uses `debitColumn`/`creditColumn`). A bank-provided category column is used only if its value matches one of our category IDs or names.
+
+## Auto-Categorization (`src/utils/categorizer.js`)
+
+- Matching is case-insensitive, and a keyword must **start at a word boundary** (`rent` matches "RENT PMT", not "PARENT"; `gas` doesn't match "VEGAS").
+- When several keywords match, the **longest keyword wins** (`uber eats` beats `uber`; `internet payment - thank you` beats `internet`). Ties go to the category listed first in `CATEGORIES`.
+- Keyword lists: `DEFAULT_CATEGORY_KEYWORDS` and `DEFAULT_SUBSCRIPTION_KEYWORDS` in `src/constants/defaultKeywords.js` = generic base lists + the private keywords file (below). Prefer specific multi-word keywords; short generic ones cause false matches.
+- **Private keywords:** merchants, banks, and services specific to the user go in `src/constants/privateKeywords.local.js` (gitignored via `*.local.js`), never in `defaultKeywords.js`. It's loaded with `import.meta.glob` when present and skipped when absent or under Vitest, so a fresh clone and the tests run without it. Format:
+  ```js
+  export const PRIVATE_CATEGORY_KEYWORDS = { groceries: ['my local market'], transfers: ['my other bank'] };
+  export const PRIVATE_SUBSCRIPTION_KEYWORDS = ['some service'];
+  ```
+  A local `npm run build` bundles these keywords into `dist/`. Deploy from CI (where the file doesn't exist), not from a locally built `dist/`.
+- **Only the user's overrides are stored:** `data.categoryKeywords` = user-added keywords per category, `data.removedKeywords` = defaults the user turned off. `getEffectiveKeywords(added, removed)` merges them with the code defaults, so improving the defaults reaches existing users. Settings shows the effective map and saves `diffKeywords(edited)`.
+- Changing keywords only affects new imports. Settings → **Re-categorize Imported Transactions** previews changes for existing `csv_import` transactions and applies the ones left ticked.
+- If you retire a default keyword, add it to `RETIRED_DEFAULT_KEYWORDS` in `src/utils/migrate.js` so v1 migration doesn't mistake it for a user addition.
+
+## Spending Categories
+
+Defined in `src/constants/categories.js`; use these IDs everywhere:
+
+| ID             | Name                 | Icon | Color     |
+|----------------|----------------------|------|-----------|
+| housing        | Housing              | 🏠   | `#E8927C` |
+| transport      | Transport            | 🚗   | `#7CB5E8` |
+| groceries      | Groceries            | 🛒   | `#E8C97C` |
+| dining         | Dining Out           | 🍽️   | `#E8A64C` |
+| utilities      | Utilities            | ⚡   | `#7CE8A3` |
+| entertainment  | Entertainment        | 🎬   | `#C97CE8` |
+| health         | Health               | 💊   | `#E87C9A` |
+| shopping       | Shopping             | 🛍️   | `#7CE8D6` |
+| insurance      | Insurance            | 🛡️   | `#A3E87C` |
+| subscriptions  | Subscriptions        | 🔄   | `#E87CE8` |
+| betting        | Gambling             | 🎲   | `#E8D44C` |
+| transfers      | Transfers            | 🔁   | `#6B7280` |
+| other          | Other                | 📦   | `#9CA3AF` |
+
+`subscriptions` has no default keywords. Subscription charges are categorized by what they are (e.g. Netflix → entertainment) and flagged with `isSubscription` instead.
+
+## Net Worth
+
+- Account categories (page-local): `bank`, `investment`, `property` (assets), `debt` (liability).
+- **Snapshots** are end-of-day balances (`{ accountId, date, balance, source }`). A statement's *beginning* balance is stored on the day **before** the period starts.
+- **Live balances** (`buildBalanceTimeline` in `src/utils/netWorth.js`): for an account with `linkedBankProfile`, transactions whose `importedFrom` equals that profile fill in daily balances — forward from every snapshot up to the next one, and backward from the earliest. Effect depends on account type: credits raise assets / lower liabilities; debits lower assets / raise liabilities. No snapshot → no balance.
+- Mortgage properties (asset) and active loans (liability) are derived automatically from mortgage data and shown with an AUTO badge (not editable here).
+
+## Mortgage
+
+- Loans have `servicerType` (`lakeview` | `rocket`) used to match statement PDFs (by loan number first, then servicer type).
+- `generateAmortization` builds the original schedule; actual payments overlay it; `extrapolateFromBalance` projects payoff from the latest actual balance at the loan's `monthlyPI`.
+- PDF import (`src/utils/mortgagePdfParser.js`) flags a statement as duplicate when the loan already has a payment for that `forMonth` (or the same statement appears twice in one upload). Rocket statements report one principal figure; `splitRocketPrincipal` splits it into scheduled vs. extra using the matched loan's `monthlyPI` (falling back to the statement's Amount Due).
+- Don't hardcode personal figures (payment amounts, account numbers) in parsers, tests, or comments — derive them from the matched loan or use obviously fake placeholders.
+
+## Data Model
+
+Single localStorage key `moneylens-data`:
+
+```json
+{
+  "version": 2,
+  "transactions": [
+    {
+      "id": "tx_1711234567890_0",
+      "name": "WHOLE FOODS #1234",
+      "amount": 42.5,
+      "category": "groceries",
+      "type": "debit",
+      "isSubscription": false,
+      "date": "2026-03-18",
+      "source": "csv_import",
+      "importedFrom": "usbank_checking",
+      "importedAt": "2026-03-22T00:00:00Z",
+      "createdAt": "2026-03-18T00:00:00Z"
+    },
+    {
+      "id": "tx_1711234567891",
+      "name": "Farmers market",
+      "amount": 32.0,
+      "category": "groceries",
+      "date": "2026-03-20",
+      "source": "manual",
+      "createdAt": "2026-03-20T15:04:05.000Z"
+    }
+  ],
+  "subscriptions": [
+    { "id": "sub_1711234567890", "name": "Netflix", "amount": 15.49, "frequency": "monthly", "category": "entertainment", "nextDate": "2026-04-15", "createdAt": "..." }
+  ],
+  "budgets": { "dining": 300, "groceries": 600 },
+  "bankProfiles": { "my_credit_union": { "name": "My Credit Union", "...": "see Bank profiles" } },
+  "categoryKeywords": { "groceries": ["corner market"] },
+  "removedKeywords": { "transport": ["toll"] },
+  "mortgages": {
+    "properties": [{ "id": "prop_…", "address": "", "purchasePrice": 0, "purchaseDate": "YYYY-MM-DD", "estimatedValue": 0 }],
+    "loans": [{ "id": "loan_…", "label": "", "lender": "", "servicer": "", "servicerType": "rocket", "loanNumber": "", "loanAmount": 0, "interestRate": 6.5, "termYears": 30, "monthlyPI": 0, "startDate": "YYYY-MM-DD", "maturityDate": "", "closingDate": "", "loanType": "", "closingCosts": 0, "cashToClose": 0, "lenderCredits": 0, "status": "active | paid_off", "payoffDate": null, "payoffBalance": null, "propertyId": "", "refinancesLoanId": "optional" }],
+    "payments": [{ "id": "mpay_…", "loanId": "loan_…", "date": "YYYY-MM-DD", "forMonth": "YYYY-MM", "principal": 0, "interest": 0, "escrow": 0, "extraPrincipal": 0, "balanceAfter": 0, "source": "manual | pdf_import", "statementDate": "YYYY-MM-DD" }]
+  },
+  "netWorth": {
+    "accounts": [{ "id": "acct_…", "name": "US Bank Checking", "type": "asset | liability", "category": "bank | investment | property | debt", "linkedBankProfile": "usbank_checking" }],
+    "snapshots": [{ "id": "snap_…", "accountId": "acct_…", "date": "YYYY-MM-DD", "balance": 0, "source": "manual | pdf_import" }]
+  }
+}
+```
+
+- `type` exists only on imported transactions; `isSubscription` is set on import (and by re-categorize).
+- `importedFrom` is the profile ID of the file the row came from, or `"manual"` for an unsaved manual mapping.
+
+### Schema versions and migration
+
+`src/utils/migrate.js` owns the stored shape: `createDefaultData()`, `SCHEMA_VERSION`, and `migrateData(raw)`, which runs on every load and on JSON restore. **Any change to the stored shape must bump `SCHEMA_VERSION` and add a migration step**, with a test in `migrate.test.js`. v1 → v2: reduced the stored keyword snapshot to user additions, dropped `monthlyIncome`, and renamed colliding IDs.
+
+### ID generation
+
+Always use `makeId(prefix)` from `src/utils/ids.js` (`tx_`, `sub_`, `prop_`, `loan_`, `mpay_`, `acct_`, `snap_`). It returns `prefix_<Date.now()>` and appends `_N` when called more than once in the same millisecond. Batch operations use one `makeId` plus an index (`tx_1711234567890_0`, `_1`, …). Never build IDs from raw `Date.now()` in a loop — that produced duplicate IDs (and deleting one record deleted all of them).
+
+## Project Structure
+
+```
+moneylens/
+├── CLAUDE.md
+├── eslint.config.js
+├── index.html
+├── package.json
+├── vite.config.js                 # also Vitest config (TZ)
+├── public/favicon.svg
+└── src/
+    ├── main.jsx                   # ErrorBoundary + BrowserRouter
+    ├── App.jsx                    # Routes, lazy pages, passes finance hook down as props
+    ├── App.css
+    ├── constants/
+    │   ├── categories.js          # CATEGORIES, CATEGORY_MAP, formatCurrency
+    │   ├── defaultKeywords.js     # Generic category + subscription keywords (+ private file if present)
+    │   ├── privateKeywords.local.js  # Gitignored: the user's personal keywords (may not exist)
+    │   └── bankProfiles.js        # Built-in CSV profiles, filename detection, profile → account map
+    ├── hooks/
+    │   └── useFinanceData.js      # All state + CRUD + localStorage persistence
+    ├── utils/
+    │   ├── transactions.js        # isIncome / isSpending / isTransfer, sums
+    │   ├── categorizer.js         # Keyword matching, effective keywords, overrides diff
+    │   ├── csvParser.js           # PapaParse wrapper, date detection, amount normalization
+    │   ├── duplicateDetector.js   # date + amount + description matching
+    │   ├── netWorth.js            # Balance timeline from snapshots + linked transactions
+    │   ├── mortgageCalculations.js
+    │   ├── mortgagePdfParser.js   # Lakeview/Rocket mortgage + US Bank statement PDFs
+    │   ├── migrate.js             # Default data, schema version, migrations
+    │   ├── dates.js               # Local-date helpers (todayISO, currentMonth, addDays, …)
+    │   ├── ids.js                 # makeId
+    │   ├── subscriptions.js       # getMonthlyAmount
+    │   └── *.test.js              # Vitest unit tests
+    ├── components/
+    │   ├── Layout.jsx             # Header, nav, Suspense around routes
+    │   ├── ErrorBoundary.jsx      # Crash screen with "Download Backup"
+    │   ├── Modal.jsx
+    │   ├── ConfirmButton.jsx      # Two-click destructive action
+    │   ├── TransactionRow.jsx     # Edit/Del shown only when handlers passed
+    │   ├── TransactionForm.jsx    # Shared add/edit form (Spending, Income)
+    │   ├── SubscriptionCard.jsx
+    │   ├── CategoryChart.jsx
+    │   ├── MiniBar.jsx
+    │   ├── SummaryCard.jsx
+    │   ├── EmptyState.jsx
+    │   ├── FileDropZone.jsx
+    │   ├── ColumnMapper.jsx
+    │   └── ImportPreviewTable.jsx
+    └── pages/
+        ├── Dashboard.jsx  Subscriptions.jsx  Spending.jsx  Income.jsx  Trends.jsx
+        ├── Budgets.jsx    Mortgage.jsx       NetWorth.jsx  Import.jsx  Settings.jsx
+```
+
+## Coding Conventions
+
+- Functional components with hooks only. The one exception is `ErrorBoundary` — React supports error boundaries only as class components.
+- One component per file (small page-private form components inside a page file are fine, e.g. `LoanForm` in `Mortgage.jsx`).
+- Destructure props in function signature.
+- Business logic in `useFinanceData` (state changes) and `src/utils` (pure, unit-tested). Pages compose; they shouldn't re-implement money rules.
+- Format currency with `formatCurrency` (`Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })`).
+- **Dates:** use `src/utils/dates.js`. Never `new Date().toISOString().slice(0, 10)` for a calendar date — it's UTC and gives tomorrow's date in the evening west of UTC.
+- `const` by default, `let` only when reassignment is needed. Prefer early returns.
+- Styling: use classes in `App.css`. Inline styles only for data-driven values (category colors, bar widths). Some older static inline styles remain; don't add new ones.
+- Destructive deletes of records with dependents (loans, properties, accounts) go through `ConfirmButton`.
+
+## Personal Data
+
+The repo is public; the app's real data lives only in the browser's localStorage. Never commit:
+
+- Account, loan, or card numbers (even partial), balances, payment amounts, addresses
+- Merchant names, banks, or services that identify the user's own spending — use `privateKeywords.local.js`
+- Real statement text, CSV exports, PDFs, or JSON backups — tests use invented fixtures (e.g. `Account Number 1-234-5678-9012`)
+- Facts about the user (location, timezone, which accounts they hold) in code comments, docs, or commit messages
+
+Before committing, scan the diff for digits that look like account numbers or exact dollar amounts.
+
+## Known Gaps vs. the Original Spec
+
+Not built yet (build only when asked):
+- Import step 1 raw 5-row preview; preview summary with date range and debit/credit totals; credit/debit filter toggle; success toast after import
+- Editing saved bank profiles in Settings (only delete)
+- Customizing subscription keywords
+- Dashboard budget markers are full-height reference lines, not per-bar
+- "Detected from Imports" monthly estimate averages charges without normalizing frequency or excluding cancelled subscriptions
+
+## Future Enhancements (Don't Build Yet)
+
+- OFX/QFX file import (Quicken format)
+- Plaid API or SimpleFIN integration for automatic bank linking
+- Bill reminders / notifications
+- Recurring transaction auto-generation
+- Multiple currency support
+- PWA support (installable on phone home screen)
+- Dark/light theme toggle
