@@ -13,6 +13,14 @@ export function detectProfileFromFilename(fileName) {
   return '';
 }
 
+// Bank Sync: which built-in profile a Plaid account most likely continues, so its transactions join
+// that bank's CSV history instead of starting a new one. Only a suggestion — the user confirms it.
+export const PLAID_INSTITUTION_PATTERNS = [
+  { profileId: 'usbank_checking', institution: /\bu\.?\s?s\.?\s?bank\b/i, accountType: 'depository', subtype: 'checking' },
+  { profileId: 'amex_credit', institution: /\bamerican express\b|\bamex\b/i, accountType: 'credit' },
+  { profileId: 'discover_credit', institution: /\bdiscover\b/i, accountType: 'credit' },
+];
+
 // Maps bank profile IDs to net worth account metadata
 export const PROFILE_ACCOUNT_MAP = {
   usbank_checking: { name: 'US Bank Checking', type: 'asset', category: 'bank' },

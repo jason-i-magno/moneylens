@@ -65,6 +65,20 @@ describe('migrateData v1 → v2', () => {
   });
 });
 
+describe('migrateData v2 → v3', () => {
+  it('adds an empty Bank Sync section', () => {
+    const data = migrateData({ version: 2, transactions: [{ id: 'tx_1' }] });
+    expect(data.plaid).toEqual({ items: [] });
+    expect(data.transactions).toEqual([{ id: 'tx_1' }]);
+    expect(data.version).toBe(3);
+  });
+
+  it('keeps existing Bank Sync connections', () => {
+    const items = [{ itemId: 'item_1', cursor: 'c1', accounts: [] }];
+    expect(migrateData({ version: 3, plaid: { items } }).plaid.items).toEqual(items);
+  });
+});
+
 describe('dedupeIds', () => {
   it('renames later duplicates without colliding with existing IDs', () => {
     const result = dedupeIds([{ id: 'x' }, { id: 'x' }, { id: 'x_1' }]);

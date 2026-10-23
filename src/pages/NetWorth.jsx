@@ -7,6 +7,7 @@ import FileDropZone from '../components/FileDropZone';
 import EmptyState from '../components/EmptyState';
 import ConfirmButton from '../components/ConfirmButton';
 import { buildBalanceTimeline } from '../utils/netWorth';
+import { plaidSourceOptions } from '../utils/plaidSync';
 import { todayISO } from '../utils/dates';
 
 const ACCOUNT_CATEGORIES = [
@@ -28,9 +29,10 @@ export default function NetWorth({ data, finance }) {
   const nw = data.netWorth;
   const mortgages = data.mortgages;
 
+  // Bank Sync sources too, so editing an account Bank Sync created keeps its link
   const bankProfileOptions = useMemo(
-    () => Object.entries({ ...BUILTIN_BANK_PROFILES, ...(data.bankProfiles || {}) }),
-    [data.bankProfiles]
+    () => [...Object.entries({ ...BUILTIN_BANK_PROFILES, ...(data.bankProfiles || {}) }), ...plaidSourceOptions(data.plaid)],
+    [data.bankProfiles, data.plaid]
   );
 
   // Auto-derived values from mortgage data
@@ -442,7 +444,7 @@ function SnapshotList({ snapshots, onDelete }) {
     <div className="snapshot-list">
       {sorted.map((s) => (
         <div key={s.id} className="profile-row">
-          <span>{s.date} &middot; {formatCurrency(s.balance)}{s.source === 'pdf_import' && <span className="tx-badge">PDF</span>}</span>
+          <span>{s.date} &middot; {formatCurrency(s.balance)}{s.source === 'pdf_import' && <span className="tx-badge">PDF</span>}{s.source === 'plaid' && <span className="tx-badge">SYNC</span>}</span>
           <button className="btn-icon danger" onClick={() => onDelete(s.id)}>Del</button>
         </div>
       ))}

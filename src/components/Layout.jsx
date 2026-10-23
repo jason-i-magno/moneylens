@@ -11,10 +11,12 @@ const NAV_ITEMS = [
   { to: '/mortgage', label: 'Mortgage' },
   { to: '/net-worth', label: 'Net Worth' },
   { to: '/import', label: 'Import' },
+  { to: '/bank-sync', label: 'Bank Sync' },
   { to: '/settings', label: 'Settings' },
 ];
 
-export default function Layout() {
+// bankSyncAlert: a connection failed its last sync (e.g. the bank wants the user to log in again)
+export default function Layout({ bankSyncAlert }) {
   return (
     <div className="app-layout">
       <header className="app-header">
@@ -27,6 +29,7 @@ export default function Layout() {
               className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
             >
               {label}
+              {to === '/bank-sync' && bankSyncAlert && <span className="nav-alert" title="A bank needs attention" />}
             </NavLink>
           ))}
         </nav>

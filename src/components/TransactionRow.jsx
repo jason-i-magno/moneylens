@@ -16,6 +16,7 @@ export default function TransactionRow({ transaction, onEdit, onDelete }) {
           {date} &middot; {cat.name}
           {transaction.isSubscription && <span className="tx-badge sub">SUB</span>}
           {source === 'csv_import' && <span className="tx-badge">CSV</span>}
+          {source === 'plaid' && <span className="tx-badge">SYNC</span>}
         </span>
       </div>
       <div className="tx-amount">{formatCurrency(amount)}</div>

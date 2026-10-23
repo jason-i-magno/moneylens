@@ -1,0 +1,249 @@
+// Bank Sync (Plaid): pure functions that turn a sync result from the local server into app data.
+// Each Plaid account has a `target` — the `importedFrom` value its transactions get — which is
+// either a bank profile ID (continuing that bank's CSV history) or its own `plaid_<accountId>`.
+import { PLAID_INSTITUTION_PATTERNS, PROFILE_ACCOUNT_MAP } from '../constants/bankProfiles';
+import { getEffectiveKeywords, recategorizeStored } from './categorizer';
+import { roundCents } from './transactions';
+
+export const plaidSourceId = (accountId) => `plaid_${accountId}`;
+const isPlaidSource = (target) => typeof target === 'string' && target.startsWith('plaid_');
+
+export const describePlaidAccount = (account) => `${account.name}${account.mask ? ` ••${account.mask}` : ''}`;
+
+const NET_WORTH_KIND = {
+  depository: { type: 'asset', category: 'bank' },
+  credit: { type: 'liability', category: 'debt' },
+  loan: { type: 'liability', category: 'debt' },
+  investment: { type: 'asset', category: 'investment' },
+};
+
+// Loan and investment accounts aren't synced unless the user opts in: a loan's payments would
+// count as income, and mortgages are already tracked on the Mortgage page.
+const SYNCED_BY_DEFAULT = new Set(['depository', 'credit']);
+
+// Default "Sync into" choice per account of a newly connected bank.
+// Sandbox data is fake, so it always gets its own sources and never joins a real bank's history.
+export function defaultTargets(accounts, { institutionName, env, takenTargets = new Set() }) {
+  const targets = {};
+  for (const acct of accounts) {
+    targets[acct.id] = SYNCED_BY_DEFAULT.has(acct.type) ? plaidSourceId(acct.id) : null;
+  }
+  if (env !== 'production') return targets;
+
+  for (const p of PLAID_INSTITUTION_PATTERNS) {
+    if (!p.institution.test(institutionName || '') || takenTargets.has(p.profileId)) continue;
+    const matches = accounts.filter((a) => a.type === p.accountType && (!p.subtype || a.subtype === p.subtype));
+    if (matches.length === 1) targets[matches[0].id] = p.profileId; // two candidates: let the user pick
+  }
+  return targets;
+}
+
+// Latest date already imported (by CSV) into a source; Bank Sync starts there
+export function latestImportedDate(transactions, target) {
+  let latest = null;
+  for (const tx of transactions) {
+    if (tx.importedFrom === target && tx.source !== 'plaid' && (!latest || tx.date > latest)) latest = tx.date;
+  }
+  return latest;
+}
+
+export function buildPlaidItem({ itemId, institutionName, env }, accounts, targets, transactions) {
+  return {
+    itemId,
+    institutionName,
+    env,
+    cursor: '',
+    lastSyncAt: null,
+    lastError: null,
+    lastSummary: null,
+    historyStatus: null,
+    accounts: accounts.map((a) => {
+      const target = targets[a.id] || null;
+      return {
+        id: a.id,
+        name: a.name,
+        mask: a.mask,
+        type: a.type,
+        subtype: a.subtype,
+        target,
+        startDate: target ? latestImportedDate(transactions, target) : null,
+      };
+    }),
+  };
+}
+
+const sameDayKey = (importedFrom, date, type, amount) => `${importedFrom}|${date}|${type}|${amount}`;
+
+function toFields(ptx) {
+  return {
+    name: ptx.name,
+    amount: roundCents(Math.abs(ptx.amount)),
+    type: ptx.amount > 0 ? 'debit' : 'credit',
+    date: ptx.date,
+    ...(ptx.merchantName && { merchantName: ptx.merchantName }),
+    ...(ptx.category && { plaidCategory: ptx.category }),
+  };
+}
+
+// Applies one sync result. Returns `data` unchanged when the result is stale (the item's cursor has
+// moved on, e.g. the same sync ran twice), which makes applying a result idempotent.
+// `ids` = { tx, acct, snap } prefixes from makeId; records get `_N` appended.
+export function applySyncResult(data, itemId, result, { ids, now, today }) {
+  const item = data.plaid.items.find((i) => i.itemId === itemId);
+  if (!item || item.cursor !== result.fromCursor) return data;
+
+  const accountsById = new Map(item.accounts.map((a) => [a.id, a]));
+  const summary = { added: 0, updated: 0, removed: 0, skipped: 0, balances: 0 };
+
+  const removedIds = new Set(result.removed);
+  let transactions = data.transactions.filter((tx) => !(tx.plaidTransactionId && removedIds.has(tx.plaidTransactionId)));
+  summary.removed = data.transactions.length - transactions.length;
+
+  const indexByPlaidId = new Map();
+  transactions.forEach((tx, i) => {
+    if (tx.plaidTransactionId) indexByPlaidId.set(tx.plaidTransactionId, i);
+  });
+
+  // CSV rows on each account's start date, so a day covered by both isn't imported twice
+  const csvOnStartDate = new Map();
+  for (const acct of item.accounts) {
+    if (!acct.target || !acct.startDate) continue;
+    for (const tx of transactions) {
+      if (tx.importedFrom !== acct.target || tx.date !== acct.startDate || tx.source === 'plaid') continue;
+      const key = sameDayKey(tx.importedFrom, tx.date, tx.type || 'debit', tx.amount);
+      csvOnStartDate.set(key, (csvOnStartDate.get(key) || 0) + 1);
+    }
+  }
+
+  const updates = new Map(); // transaction index → changed fields (the user's category is kept)
+  const fresh = new Map(); // plaid transaction id → { ptx, acct, fields }
+  for (const ptx of [...result.added, ...result.modified]) {
+    const acct = accountsById.get(ptx.accountId);
+    if (!acct?.target) continue;
+    const fields = toFields(ptx);
+
+    const existing = indexByPlaidId.get(ptx.id);
+    if (existing !== undefined) {
+      updates.set(existing, fields);
+      continue;
+    }
+    if (fresh.has(ptx.id)) {
+      fresh.set(ptx.id, { ...fresh.get(ptx.id), fields });
+      continue;
+    }
+    if (acct.startDate && fields.date < acct.startDate) {
+      summary.skipped++;
+      continue;
+    }
+    if (acct.startDate && fields.date === acct.startDate) {
+      const key = sameDayKey(acct.target, fields.date, fields.type, fields.amount);
+      const left = csvOnStartDate.get(key) || 0;
+      if (left > 0) {
+        csvOnStartDate.set(key, left - 1);
+        summary.skipped++;
+        continue;
+      }
+    }
+    fresh.set(ptx.id, { ptx, acct, fields });
+  }
+
+  transactions = transactions.map((tx, i) => (updates.has(i) ? { ...tx, ...updates.get(i) } : tx));
+  summary.updated = updates.size;
+
+  const keywords = getEffectiveKeywords(data.categoryKeywords, data.removedKeywords);
+  const freshList = [...fresh.values()];
+  const categorized = recategorizeStored(freshList.map((f) => f.fields), keywords);
+  const newTxs = freshList.map(({ ptx, acct, fields }, i) => ({
+    id: `${ids.tx}_${i}`,
+    ...fields,
+    category: categorized[i].category,
+    isSubscription: categorized[i].isSubscription,
+    source: 'plaid',
+    importedFrom: acct.target,
+    plaidTransactionId: ptx.id,
+    plaidAccountId: ptx.accountId,
+    importedAt: now,
+    createdAt: `${fields.date}T00:00:00Z`,
+  }));
+  summary.added = newTxs.length;
+
+  // Balances become today's snapshot on the Net Worth account linked to the same source
+  let nwAccounts = data.netWorth.accounts;
+  let snapshots = data.netWorth.snapshots;
+  let acctCount = 0;
+  let snapCount = 0;
+  for (const pa of result.accounts) {
+    const acct = accountsById.get(pa.id);
+    if (!acct?.target || pa.balance == null) continue;
+
+    let nwAccount = nwAccounts.find((a) => a.linkedBankProfile === acct.target);
+    if (!nwAccount) {
+      const kind = PROFILE_ACCOUNT_MAP[acct.target] || NET_WORTH_KIND[pa.type] || NET_WORTH_KIND.depository;
+      nwAccount = {
+        name: PROFILE_ACCOUNT_MAP[acct.target]?.name || `${item.institutionName} ${describePlaidAccount(pa)}`,
+        type: kind.type,
+        category: kind.category,
+        linkedBankProfile: acct.target,
+        id: `${ids.acct}_${acctCount++}`,
+        createdAt: now,
+      };
+      nwAccounts = [...nwAccounts, nwAccount];
+    }
+
+    const sameDay = snapshots.find((s) => s.accountId === nwAccount.id && s.date === today);
+    if (sameDay && sameDay.source !== 'plaid') continue; // a balance the user entered wins
+    const balance = roundCents(pa.balance);
+    snapshots = sameDay
+      ? snapshots.map((s) => (s === sameDay ? { ...s, balance } : s))
+      : [...snapshots, { id: `${ids.snap}_${snapCount++}`, accountId: nwAccount.id, date: today, balance, source: 'plaid', createdAt: now }];
+    summary.balances++;
+  }
+
+  const items = data.plaid.items.map((i) => (i.itemId === itemId
+    ? { ...i, cursor: result.nextCursor, lastSyncAt: now, lastError: null, lastSummary: summary, historyStatus: result.updateStatus || null }
+    : i));
+
+  return {
+    ...data,
+    transactions: [...transactions, ...newTxs],
+    netWorth: { ...data.netWorth, accounts: nwAccounts, snapshots },
+    plaid: { ...data.plaid, items },
+  };
+}
+
+export function setPlaidItemError(data, itemId, error) {
+  const items = data.plaid.items.map((i) => (i.itemId === itemId ? { ...i, lastError: error } : i));
+  return { ...data, plaid: { ...data.plaid, items } };
+}
+
+// Forgets a connection's account mapping. With deleteSyncedData it also deletes the transactions it
+// synced and the Net Worth accounts it created (with their balances); accounts that belong to a
+// bank profile, like US Bank Checking, are kept.
+export function removePlaidItem(data, itemId, { deleteSyncedData = false } = {}) {
+  const item = data.plaid.items.find((i) => i.itemId === itemId);
+  if (!item) return data;
+  const items = data.plaid.items.filter((i) => i.itemId !== itemId);
+  if (!deleteSyncedData) return { ...data, plaid: { ...data.plaid, items } };
+
+  const plaidAccountIds = new Set(item.accounts.map((a) => a.id));
+  const ownSources = new Set(item.accounts.map((a) => a.target).filter(isPlaidSource));
+  const droppedAccounts = new Set(data.netWorth.accounts.filter((a) => ownSources.has(a.linkedBankProfile)).map((a) => a.id));
+
+  return {
+    ...data,
+    transactions: data.transactions.filter((tx) => !(tx.source === 'plaid' && plaidAccountIds.has(tx.plaidAccountId))),
+    netWorth: {
+      ...data.netWorth,
+      accounts: data.netWorth.accounts.filter((a) => !droppedAccounts.has(a.id)),
+      snapshots: data.netWorth.snapshots.filter((s) => !droppedAccounts.has(s.accountId)),
+    },
+    plaid: { ...data.plaid, items },
+  };
+}
+
+// Bank Sync sources as [id, { name }] pairs, for "Linked Bank Profile" pickers next to real profiles
+export function plaidSourceOptions(plaid) {
+  return plaid.items.flatMap((item) => item.accounts
+    .filter((a) => isPlaidSource(a.target))
+    .map((a) => [a.target, { name: `${item.institutionName} ${describePlaidAccount(a)} (Bank Sync)` }]));
+}

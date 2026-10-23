@@ -1,7 +1,7 @@
 import { DEFAULT_CATEGORY_KEYWORDS } from '../constants/defaultKeywords';
 import { CATEGORY_MAP } from '../constants/categories';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export function createDefaultData() {
   return {
@@ -14,6 +14,7 @@ export function createDefaultData() {
     removedKeywords: {}, // code-default keywords the user turned off, per category
     mortgages: { properties: [], loans: [], payments: [] },
     netWorth: { accounts: [], snapshots: [] },
+    plaid: { items: [] }, // Bank Sync connections: account mapping + cursor (access tokens stay on the local server)
   };
 }
 
@@ -62,6 +63,7 @@ export function migrateData(raw) {
     ...raw,
     mortgages: { ...base.mortgages, ...raw.mortgages },
     netWorth: { ...base.netWorth, ...raw.netWorth },
+    plaid: { ...base.plaid, ...raw.plaid }, // v2 → v3 added `plaid`; this fills it in
   };
 
   if ((raw.version || 1) < 2) {

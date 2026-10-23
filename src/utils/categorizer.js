@@ -1,5 +1,6 @@
 import { DEFAULT_CATEGORY_KEYWORDS, DEFAULT_SUBSCRIPTION_KEYWORDS } from '../constants/defaultKeywords';
 import { CATEGORIES, CATEGORY_MAP } from '../constants/categories';
+import { mapPlaidCategory } from '../constants/plaidCategories';
 
 const CATEGORY_ORDER = Object.fromEntries(CATEGORIES.map((c, i) => [c.id, i]));
 
@@ -56,8 +57,8 @@ function compileMatchers(keywords) {
   return matchers.sort((a, b) => b.length - a.length || a.order - b.order);
 }
 
-function matchCategory(description, matchers) {
-  return matchers.find((m) => m.regex.test(description))?.category || 'other';
+function matchCategory(description, matchers, fallback = 'other') {
+  return matchers.find((m) => m.regex.test(description))?.category || fallback;
 }
 
 export function categorizeTransaction(description, keywords = DEFAULT_CATEGORY_KEYWORDS) {
@@ -75,11 +76,25 @@ function normalizeBankCategory(raw) {
   return CATEGORIES.find((c) => c.id === lower || c.name.toLowerCase() === lower)?.id || null;
 }
 
+// `fallbackCategory` (optional, per row) replaces 'other' when no keyword matches
 export function categorizeBatch(transactions, keywords = DEFAULT_CATEGORY_KEYWORDS) {
   const matchers = compileMatchers(keywords);
   return transactions.map((tx) => ({
     ...tx,
-    category: normalizeBankCategory(tx.category) || matchCategory(tx.description, matchers),
+    category: normalizeBankCategory(tx.category) || matchCategory(tx.description, matchers, tx.fallbackCategory || 'other'),
     isSubscription: isSubscription(tx.description),
   }));
+}
+
+// Category and subscription flag for stored transactions (CSV or Bank Sync). Plaid's merchant
+// name is matched too, and Plaid's own category fills in when no keyword matches.
+export function recategorizeStored(transactions, keywords = DEFAULT_CATEGORY_KEYWORDS) {
+  return categorizeBatch(
+    transactions.map((tx) => ({
+      description: [tx.name, tx.merchantName].filter(Boolean).join(' '),
+      category: null,
+      fallbackCategory: mapPlaidCategory(tx.plaidCategory),
+    })),
+    keywords
+  ).map(({ category, isSubscription }) => ({ category, isSubscription }));
 }

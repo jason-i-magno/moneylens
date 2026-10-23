@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth — without bank linking or paid APIs. Transactions come in mainly as **CSV files downloaded from the bank's website**; balances and mortgage payments can also be read from **statement PDFs**. Everything is stored locally in the browser.
+MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth without paid APIs. Transactions come in as **CSV files downloaded from the bank's website** or, optionally, through **Bank Sync** (Plaid's free Trial plan, via a small local server); balances and mortgage payments can also be read from **statement PDFs**. App data is stored locally in the browser.
 
-Built-in support: CSV profiles for **US Bank checking, American Express, and Discover**; statement PDF parsers for **Lakeview/LoanCare** and **Rocket Mortgage** (mortgage payments) and **US Bank** (account balances). Other banks work through manual column mapping.
+Built-in support: CSV profiles for **US Bank checking, American Express, and Discover**; statement PDF parsers for **Lakeview/LoanCare** and **Rocket Mortgage** (mortgage payments) and **US Bank** (account balances). Other banks work through manual column mapping or Bank Sync.
 
 **This repo is public. Never commit personal data** — see [Personal Data](#personal-data).
 
@@ -18,18 +18,19 @@ Built-in support: CSV profiles for **US Bank checking, American Express, and Dis
 - **Charts:** Recharts
 - **CSV parsing:** PapaParse
 - **PDF parsing:** pdfjs-dist (loaded on demand — only the Mortgage and Net Worth pages import it)
-- **Tests:** Vitest (unit tests for `src/utils`, run with `TZ=Etc/GMT+10` (UTC−10) so UTC-vs-local date bugs show up)
+- **Tests:** Vitest (unit tests for `src/utils` and `server/`, run with `TZ=Etc/GMT+10` (UTC−10) so UTC-vs-local date bugs show up)
 - **Lint:** ESLint 9 flat config with `react-hooks` and `react-refresh`
-- **No backend** — fully client-side; deploy as a static site (Vercel/Netlify)
+- **Backend:** none, except the Bank Sync API (`server/plaidApi.js`), a Vite plugin that runs inside `npm run dev` / `npm run preview`. Everything else is client-side and deploys as a static site (Vercel/Netlify); Bank Sync just shows setup instructions there.
 
 ## Commands
 
 ```bash
 npm install        # Install deps
-npm run dev        # Start dev server
+npm run dev        # Start dev server (with the Bank Sync API)
 npm test           # Run unit tests once (npm run test:watch to watch)
 npm run lint       # ESLint
 npm run build      # Production build
+npm run preview    # Serve the build locally (with the Bank Sync API)
 ```
 
 Run `npm run lint && npm test && npm run build` before calling a change done.
@@ -74,7 +75,8 @@ All rules live in `src/utils/transactions.js` — use these helpers, never re-im
 | `/mortgage` | Mortgage | Properties, loans, payments; amortization vs. actual; extra-payment impact; combined view across a refi; statement PDF import; JSON import/export; delete payments/loans/properties |
 | `/net-worth` | Net Worth | Accounts (assets/liabilities) with balance snapshots; live balances for accounts linked to a bank profile; mortgage loans and properties included automatically; US Bank statement PDF import |
 | `/import` | Import | CSV import wizard (below) |
-| `/settings` | Settings | Delete saved bank profiles; edit category keywords; re-categorize imported transactions; export/import JSON; reset |
+| `/bank-sync` | Bank Sync | Connect banks through Plaid, choose where each account syncs, sync, reconnect, disconnect (below) |
+| `/settings` | Settings | Delete saved bank profiles; edit category keywords; re-categorize imported and synced transactions; export/import JSON; reset |
 
 ## CSV Import (`/import`) — primary data entry
 
@@ -109,6 +111,29 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
 
 `amountFormat`: `negative_is_debit` (US Bank), `positive_is_debit` (Amex, Discover), or `two_columns` (uses `debitColumn`/`creditColumn`). A bank-provided category column is used only if its value matches one of our category IDs or names.
 
+## Bank Sync (`/bank-sync`) — Plaid
+
+**Where things live.** The Plaid keys are in `.env.local` (gitignored; template in `.env.example`; loaded in `vite.config.js` with `loadEnv(…, 'PLAID_')` — never give them a `VITE_` prefix, or Vite ships them to the browser): one `PLAID_CLIENT_ID`, one secret per environment (`PLAID_SECRET_SANDBOX`, `PLAID_SECRET_PRODUCTION`), and `PLAID_ENV` choosing between them. `resolvePlaidConfig` turns these into the API's config or a setup problem to show (a missing variable, or the retired single `PLAID_SECRET`, which is never guessed at). Per-bank access tokens are in `~/.config/moneylens/plaid-tokens.json` (override with `PLAID_TOKEN_FILE`), outside the repo so they can't be committed, served by Vite, or wiped by `git clean -x`. The browser stores only `data.plaid.items` (account mapping + sync cursor) and never sees a token or the secret.
+
+**Local API** (`server/plaidApi.js`, mounted at `/api/plaid/*` by `plaidApiPlugin`): POST + JSON only; refuses non-localhost `Host` headers (DNS rebinding) and foreign `Origin`s, because plugin middleware runs before Vite's own CORS/host checks. Actions: `status`, `link-token` (with `itemId` = update mode), `exchange`, `accounts`, `sync`, `remove`. `PLAID_ENV` is `sandbox` or `production`; tokens are stored per environment.
+
+**Plaid specifics that shaped the code:**
+- Link products: `['transactions']` with `days_requested: 730`. Plaid Link must load from `cdn.plaid.com` (`src/utils/plaidClient.js`); desktop web needs no redirect URI (OAuth opens a popup).
+- The Trial plan allows **10 connections ever**; removing one doesn't free it. The token file keeps `createdCount` (never decremented), the page shows it, and connecting a bank that's already connected asks first.
+- `/transactions/sync` pages are followed until `has_more` is false; on `TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION` the whole loop restarts from the first cursor. Pending transactions are dropped (once posted they come back under a new ID). Names use `original_description` so they match CSV rows and keyword rules.
+- Plaid amounts are positive for money out → `type: 'debit'`; negative → `'credit'`.
+- No webhooks (localhost): the app syncs on open when a connection's last sync is over 6 hours old (`usePlaidSync`), plus "Sync Now" / "Sync All".
+
+**Mapping.** Each Plaid account gets a `target` — the `importedFrom` value for its transactions and the `linkedBankProfile` of its Net Worth account: a bank profile ID (continues that bank's CSV history; `PLAID_INSTITUTION_PATTERNS` suggests one in production), `plaid_<accountId>` (its own source), or `null` (not synced — the default for loan and investment accounts). Sandbox items can only use their own sources, and disconnecting one deletes its data.
+
+**Sync rules** (`applySyncResult` in `src/utils/plaidSync.js`, pure and unit-tested):
+- A result applies only if its `fromCursor` equals the item's current cursor, so a duplicate or stale sync is a no-op.
+- For an account continuing CSV history, `startDate` = latest CSV date for that source (set when the mapping is saved). Earlier Plaid rows are skipped; rows on that date are skipped one-for-one against CSV rows with the same type and amount.
+- Modified transactions update name/amount/date/type but keep the user's category. Removed ones are deleted.
+- Categories: keywords first (matched against the name plus Plaid's merchant name), then Plaid's `personal_finance_category` via `src/constants/plaidCategories.js`. Ambiguous transfers (deposits, generic account transfers) stay unmapped so they aren't hidden as transfers.
+- Balances become a `source: 'plaid'` snapshot for today on the Net Worth account linked to the target (created if missing), replacing an earlier Plaid snapshot that day; a manual or PDF snapshot for the same day wins.
+- "Change Accounts" deletes the item's synced transactions and the Net Worth accounts it created, then shows the setup again (no new Plaid connection needed).
+
 ## Auto-Categorization (`src/utils/categorizer.js`)
 
 - Matching is case-insensitive, and a keyword must **start at a word boundary** (`rent` matches "RENT PMT", not "PARENT"; `gas` doesn't match "VEGAS").
@@ -121,7 +146,7 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
   ```
   A local `npm run build` bundles these keywords into `dist/`. Deploy from CI (where the file doesn't exist), not from a locally built `dist/`.
 - **Only the user's overrides are stored:** `data.categoryKeywords` = user-added keywords per category, `data.removedKeywords` = defaults the user turned off. `getEffectiveKeywords(added, removed)` merges them with the code defaults, so improving the defaults reaches existing users. Settings shows the effective map and saves `diffKeywords(edited)`.
-- Changing keywords only affects new imports. Settings → **Re-categorize Imported Transactions** previews changes for existing `csv_import` transactions and applies the ones left ticked.
+- Changing keywords only affects new imports. Settings → **Re-categorize Imported Transactions** previews changes for existing `csv_import` and `plaid` transactions (`recategorizeStored`, which also applies the Plaid fallback) and applies the ones left ticked.
 - If you retire a default keyword, add it to `RETIRED_DEFAULT_KEYWORDS` in `src/utils/migrate.js` so v1 migration doesn't mistake it for a user addition.
 
 ## Spending Categories
@@ -166,7 +191,7 @@ Single localStorage key `moneylens-data`:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "transactions": [
     {
       "id": "tx_1711234567890_0",
@@ -180,6 +205,23 @@ Single localStorage key `moneylens-data`:
       "importedFrom": "usbank_checking",
       "importedAt": "2026-03-22T00:00:00Z",
       "createdAt": "2026-03-18T00:00:00Z"
+    },
+    {
+      "id": "tx_1711234567892_0",
+      "name": "SQ *CORNER MARKET",
+      "merchantName": "Corner Market",
+      "amount": 18.25,
+      "category": "groceries",
+      "type": "debit",
+      "isSubscription": false,
+      "date": "2026-03-21",
+      "source": "plaid",
+      "importedFrom": "plaid_<plaidAccountId>",
+      "plaidTransactionId": "…",
+      "plaidAccountId": "…",
+      "plaidCategory": "FOOD_AND_DRINK_GROCERIES",
+      "importedAt": "2026-03-22T08:00:00.000Z",
+      "createdAt": "2026-03-21T00:00:00Z"
     },
     {
       "id": "tx_1711234567891",
@@ -205,32 +247,44 @@ Single localStorage key `moneylens-data`:
   },
   "netWorth": {
     "accounts": [{ "id": "acct_…", "name": "US Bank Checking", "type": "asset | liability", "category": "bank | investment | property | debt", "linkedBankProfile": "usbank_checking" }],
-    "snapshots": [{ "id": "snap_…", "accountId": "acct_…", "date": "YYYY-MM-DD", "balance": 0, "source": "manual | pdf_import" }]
+    "snapshots": [{ "id": "snap_…", "accountId": "acct_…", "date": "YYYY-MM-DD", "balance": 0, "source": "manual | pdf_import | plaid" }]
+  },
+  "plaid": {
+    "items": [{
+      "itemId": "…", "institutionName": "", "env": "sandbox | production",
+      "cursor": "", "lastSyncAt": null, "lastError": null, "lastSummary": null, "historyStatus": null,
+      "accounts": [{ "id": "<plaidAccountId>", "name": "", "mask": "", "type": "depository", "subtype": "checking", "target": "usbank_checking | plaid_<id> | null", "startDate": "YYYY-MM-DD | null" }]
+    }]
   }
 }
 ```
 
-- `type` exists only on imported transactions; `isSubscription` is set on import (and by re-categorize).
-- `importedFrom` is the profile ID of the file the row came from, or `"manual"` for an unsaved manual mapping.
+- `type` exists only on imported and synced transactions; `isSubscription` is set on import (and by re-categorize).
+- `importedFrom` is the profile ID of the file the row came from, `"manual"` for an unsaved manual mapping, or a Bank Sync account's `target`.
+- `merchantName` and `plaidCategory` are present only when Plaid supplied them.
 
 ### Schema versions and migration
 
-`src/utils/migrate.js` owns the stored shape: `createDefaultData()`, `SCHEMA_VERSION`, and `migrateData(raw)`, which runs on every load and on JSON restore. **Any change to the stored shape must bump `SCHEMA_VERSION` and add a migration step**, with a test in `migrate.test.js`. v1 → v2: reduced the stored keyword snapshot to user additions, dropped `monthlyIncome`, and renamed colliding IDs.
+`src/utils/migrate.js` owns the stored shape: `createDefaultData()`, `SCHEMA_VERSION`, and `migrateData(raw)`, which runs on every load and on JSON restore. **Any change to the stored shape must bump `SCHEMA_VERSION` and add a migration step**, with a test in `migrate.test.js`. v1 → v2: reduced the stored keyword snapshot to user additions, dropped `monthlyIncome`, and renamed colliding IDs. v2 → v3: added `plaid` (filled in from the defaults).
 
 ### ID generation
 
-Always use `makeId(prefix)` from `src/utils/ids.js` (`tx_`, `sub_`, `prop_`, `loan_`, `mpay_`, `acct_`, `snap_`). It returns `prefix_<Date.now()>` and appends `_N` when called more than once in the same millisecond. Batch operations use one `makeId` plus an index (`tx_1711234567890_0`, `_1`, …). Never build IDs from raw `Date.now()` in a loop — that produced duplicate IDs (and deleting one record deleted all of them).
+Always use `makeId(prefix)` from `src/utils/ids.js` (`tx_`, `sub_`, `prop_`, `loan_`, `mpay_`, `acct_`, `snap_`). It returns `prefix_<Date.now()>` and appends `_N` when called more than once in the same millisecond. Batch operations use one `makeId` plus an index (`tx_1711234567890_0`, `_1`, …). Never build IDs from raw `Date.now()` in a loop — that produced duplicate IDs (and deleting one record deleted all of them). Call `makeId` outside `setState` updaters (see `applyPlaidSync`): React may run an updater twice.
 
 ## Project Structure
 
 ```
 moneylens/
 ├── CLAUDE.md
+├── .env.example                   # Template for .env.local (Plaid keys; gitignored)
 ├── eslint.config.js
 ├── index.html
 ├── package.json
-├── vite.config.js                 # also Vitest config (TZ)
+├── vite.config.js                 # Loads PLAID_* env, mounts the Bank Sync API; also Vitest config (TZ)
 ├── public/favicon.svg
+├── server/
+│   ├── plaidApi.js                # Bank Sync API: Plaid calls, token store, request checks, Vite plugin
+│   └── plaidApi.test.js
 └── src/
     ├── main.jsx                   # ErrorBoundary + BrowserRouter
     ├── App.jsx                    # Routes, lazy pages, passes finance hook down as props
@@ -239,15 +293,19 @@ moneylens/
     │   ├── categories.js          # CATEGORIES, CATEGORY_MAP, formatCurrency
     │   ├── defaultKeywords.js     # Generic category + subscription keywords (+ private file if present)
     │   ├── privateKeywords.local.js  # Gitignored: the user's personal keywords (may not exist)
-    │   └── bankProfiles.js        # Built-in CSV profiles, filename detection, profile → account map
+    │   ├── plaidCategories.js     # Plaid personal_finance_category → our category (fallback)
+    │   └── bankProfiles.js        # Built-in CSV profiles, filename detection, profile → account map, Plaid institution hints
     ├── hooks/
-    │   └── useFinanceData.js      # All state + CRUD + localStorage persistence
+    │   ├── useFinanceData.js      # All state + CRUD + localStorage persistence
+    │   └── usePlaidSync.js        # Bank Sync server status, sync calls, sync-on-open
     ├── utils/
     │   ├── transactions.js        # isIncome / isSpending / isTransfer, sums
     │   ├── categorizer.js         # Keyword matching, effective keywords, overrides diff
     │   ├── csvParser.js           # PapaParse wrapper, date detection, amount normalization
     │   ├── duplicateDetector.js   # date + amount + description matching
     │   ├── netWorth.js            # Balance timeline from snapshots + linked transactions
+    │   ├── plaidSync.js           # Bank Sync: default targets, applySyncResult, removePlaidItem
+    │   ├── plaidClient.js         # Browser calls to /api/plaid and the Plaid Link loader
     │   ├── mortgageCalculations.js
     │   ├── mortgagePdfParser.js   # Lakeview/Rocket mortgage + US Bank statement PDFs
     │   ├── migrate.js             # Default data, schema version, migrations
@@ -272,7 +330,7 @@ moneylens/
     │   └── ImportPreviewTable.jsx
     └── pages/
         ├── Dashboard.jsx  Subscriptions.jsx  Spending.jsx  Income.jsx  Trends.jsx
-        ├── Budgets.jsx    Mortgage.jsx       NetWorth.jsx  Import.jsx  Settings.jsx
+        ├── Budgets.jsx    Mortgage.jsx       NetWorth.jsx  Import.jsx  BankSync.jsx  Settings.jsx
 ```
 
 ## Coding Conventions
@@ -289,11 +347,12 @@ moneylens/
 
 ## Personal Data
 
-The repo is public; the app's real data lives only in the browser's localStorage. Never commit:
+The repo is public; the app's real data lives only in the browser's localStorage, and Bank Sync's secrets only in `.env.local` and `~/.config/moneylens/`. Never commit:
 
 - Account, loan, or card numbers (even partial), balances, payment amounts, addresses
 - Merchant names, banks, or services that identify the user's own spending — use `privateKeywords.local.js`
 - Real statement text, CSV exports, PDFs, or JSON backups — tests use invented fixtures (e.g. `Account Number 1-234-5678-9012`)
+- Plaid keys (`.env.local`), the token file, or real Plaid item/account/transaction IDs — tests use made-up ones (`item_1`, `acc_chk`)
 - Facts about the user (location, timezone, which accounts they hold) in code comments, docs, or commit messages
 
 Before committing, scan the diff for digits that look like account numbers or exact dollar amounts.
@@ -306,11 +365,13 @@ Not built yet (build only when asked):
 - Customizing subscription keywords
 - Dashboard budget markers are full-height reference lines, not per-bar
 - "Detected from Imports" monthly estimate averages charges without normalizing frequency or excluding cancelled subscriptions
+- Bank Sync uses only Plaid's Transactions product: no Liabilities (mortgage details still come from statement PDFs) or Investments (brokerages may not appear in Link), no webhooks, no on-demand `/transactions/refresh`
 
 ## Future Enhancements (Don't Build Yet)
 
 - OFX/QFX file import (Quicken format)
-- Plaid API or SimpleFIN integration for automatic bank linking
+- SimpleFIN as a server-free alternative to Plaid for bank linking
+- Plaid Liabilities/Investments for mortgage and brokerage balances
 - Bill reminders / notifications
 - Recurring transaction auto-generation
 - Multiple currency support

@@ -2,6 +2,7 @@ import { lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import { useFinanceData } from './hooks/useFinanceData';
+import { usePlaidSync } from './hooks/usePlaidSync';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Subscriptions = lazy(() => import('./pages/Subscriptions'));
@@ -12,15 +13,18 @@ const Budgets = lazy(() => import('./pages/Budgets'));
 const Mortgage = lazy(() => import('./pages/Mortgage'));
 const NetWorth = lazy(() => import('./pages/NetWorth'));
 const Import = lazy(() => import('./pages/Import'));
+const BankSync = lazy(() => import('./pages/BankSync'));
 const Settings = lazy(() => import('./pages/Settings'));
 
 export default function App() {
   const finance = useFinanceData();
   const { data } = finance;
+  const plaidSync = usePlaidSync(finance);
+  const bankSyncAlert = data.plaid.items.some((i) => i.lastError);
 
   return (
     <Routes>
-      <Route element={<Layout />}>
+      <Route element={<Layout bankSyncAlert={bankSyncAlert} />}>
         <Route path="/dashboard" element={<Dashboard data={data} />} />
         <Route
           path="/subscriptions"
@@ -68,6 +72,7 @@ export default function App() {
         <Route path="/mortgage" element={<Mortgage data={data} finance={finance} />} />
         <Route path="/net-worth" element={<NetWorth data={data} finance={finance} />} />
         <Route path="/import" element={<Import data={data} finance={finance} />} />
+        <Route path="/bank-sync" element={<BankSync data={data} finance={finance} plaidSync={plaidSync} />} />
         <Route
           path="/settings"
           element={

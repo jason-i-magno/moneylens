@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { createDefaultData, migrateData } from '../utils/migrate';
 import { makeId } from '../utils/ids';
+import { todayISO } from '../utils/dates';
+import { applySyncResult, removePlaidItem as removeItem, setPlaidItemError as setItemError } from '../utils/plaidSync';
 
 const STORAGE_KEY = 'moneylens-data';
 
@@ -247,6 +249,33 @@ export function useFinanceData() {
     update((d) => ({ ...d, netWorth: { ...d.netWorth, snapshots: d.netWorth.snapshots.filter((s) => s.id !== id) } }));
   }, [update]);
 
+  // Bank Sync (Plaid). Items hold each connection's account mapping and sync cursor;
+  // the access tokens stay on the local server.
+  const savePlaidItem = useCallback((item) => {
+    update((d) => ({
+      ...d,
+      plaid: { ...d.plaid, items: [...d.plaid.items.filter((i) => i.itemId !== item.itemId), item] },
+    }));
+  }, [update]);
+
+  // IDs and times are made out here: React may run the updater twice
+  const applyPlaidSync = useCallback((itemId, result) => {
+    const options = {
+      ids: { tx: makeId('tx'), acct: makeId('acct'), snap: makeId('snap') },
+      now: new Date().toISOString(),
+      today: todayISO(),
+    };
+    update((d) => applySyncResult(d, itemId, result, options));
+  }, [update]);
+
+  const setPlaidItemError = useCallback((itemId, error) => {
+    update((d) => setItemError(d, itemId, error));
+  }, [update]);
+
+  const removePlaidItem = useCallback((itemId, options) => {
+    update((d) => removeItem(d, itemId, options));
+  }, [update]);
+
   // Data management
   const exportData = useCallback(() => {
     return JSON.stringify(data, null, 2);
@@ -297,6 +326,10 @@ export function useFinanceData() {
     deleteAccount,
     addSnapshots,
     deleteSnapshot,
+    savePlaidItem,
+    applyPlaidSync,
+    setPlaidItemError,
+    removePlaidItem,
     exportData,
     importData,
     resetData,

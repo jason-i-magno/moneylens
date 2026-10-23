@@ -4,3 +4,8 @@ dist
 # Personal data — never commit
 *.local.js
 .claude/settings.local.json
+
+# Plaid keys (see .env.example). Access tokens live outside the repo, in ~/.config/moneylens/
+.env
+.env.local
+.env.*.local

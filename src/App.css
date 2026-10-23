@@ -18,13 +18,14 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--text); line-height: 1.5; -webkit-font-smoothing: antialiased; }
+button, select, input, textarea { font-family: inherit; }
 
 /* === Layout === */
 .app-layout { max-width: 960px; margin: 0 auto; padding: 0 20px; }
 .app-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; border-bottom: 1px solid var(--border); margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
 .app-logo { font-size: 1.5rem; font-weight: 700; background: linear-gradient(135deg, var(--accent-coral), var(--accent-purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-.app-nav { display: flex; gap: 4px; flex-wrap: wrap; }
-.nav-link { padding: 6px 14px; border-radius: 20px; text-decoration: none; color: var(--text-muted); font-size: 0.875rem; font-weight: 500; transition: all 0.2s; }
+.app-nav { display: flex; gap: 2px; flex-wrap: wrap; }
+.nav-link { padding: 6px 8px; border-radius: 20px; text-decoration: none; color: var(--text-muted); font-size: 0.875rem; font-weight: 500; transition: all 0.2s; }
 .nav-link:hover { color: var(--text); background: var(--card); }
 .nav-link.active { color: var(--text); background: var(--card); }
 .app-main { padding-bottom: 48px; }
@@ -86,6 +87,7 @@ body { background: var(--bg); color: var(--text); line-height: 1.5; -webkit-font
 .btn-icon { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px 8px; font-size: 0.8rem; border-radius: 4px; transition: all 0.2s; }
 .btn-icon:hover { color: var(--text); background: var(--card-hover); }
 .btn-icon.danger:hover { color: var(--danger); }
+.btn-primary:disabled, .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* === Modal === */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; animation: fadeIn 0.15s ease; }
@@ -222,6 +224,20 @@ body { background: var(--bg); color: var(--text); line-height: 1.5; -webkit-font
 .snapshot-list { margin-bottom: 20px; }
 .duplicate-choice { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
 .mt-12 { margin-top: 12px; }
+
+/* === Bank Sync === */
+.page a { color: var(--accent-coral); }
+.page code { background: var(--bg); padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+.nav-alert { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--danger); margin-left: 6px; vertical-align: middle; }
+.bank-status { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bank-item-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.bank-item-header h3 { margin-bottom: 2px; }
+.bank-account-row { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; padding: 10px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.bank-account-info { display: flex; flex-direction: column; min-width: 0; }
+.bank-account-name { font-weight: 500; }
+.bank-account-row select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 0.85rem; font-family: inherit; max-width: 100%; }
+.bank-account-note { flex-basis: 100%; font-size: 0.8rem; }
+.setup-steps { margin: 8px 0 0 20px; display: grid; gap: 6px; color: var(--text-muted); font-size: 0.9rem; }
 
 /* === Error Boundary === */
 .error-fallback { margin-top: 48px; }

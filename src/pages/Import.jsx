@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import FileDropZone from '../components/FileDropZone';
 import ColumnMapper from '../components/ColumnMapper';
 import ImportPreviewTable from '../components/ImportPreviewTable';
@@ -188,6 +188,9 @@ export default function Import({ data, finance }) {
 
       {step === 0 && (
         <div className="card">
+          <p className="muted settings-help">
+            Or skip the downloads: <Link to="/bank-sync">Bank Sync</Link> pulls transactions from your bank through Plaid.
+          </p>
           <FileDropZone onFiles={handleFiles} multiple />
 
           {fileEntries.length > 0 && (

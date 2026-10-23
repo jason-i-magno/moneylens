@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from 'react';
 import { CATEGORY_MAP } from '../constants/categories';
-import { categorizeBatch, diffKeywords, getEffectiveKeywords } from '../utils/categorizer';
+import { diffKeywords, getEffectiveKeywords, recategorizeStored } from '../utils/categorizer';
 
 const formatKeywords = (added, removed) => JSON.stringify(getEffectiveKeywords(added, removed), null, 2);
 
@@ -49,11 +49,11 @@ export default function Settings({
     setKeywordsSaved(true);
   };
 
-  // Re-run auto-categorization on imported transactions and propose the differences.
+  // Re-run auto-categorization on imported and synced transactions and propose the differences.
   // Manual transactions are left alone; the user unticks any row they corrected by hand.
   const handlePreviewRecategorize = () => {
-    const imported = data.transactions.filter((tx) => tx.source === 'csv_import');
-    const recategorized = categorizeBatch(imported.map((tx) => ({ ...tx, description: tx.name, category: '' })), effectiveKeywords);
+    const imported = data.transactions.filter((tx) => tx.source === 'csv_import' || tx.source === 'plaid');
+    const recategorized = recategorizeStored(imported, effectiveKeywords);
     const changes = recategorized
       .map((r, i) => ({ tx: imported[i], category: r.category, isSubscription: r.isSubscription }))
       .filter(({ tx, category, isSubscription }) => tx.category !== category || !!tx.isSubscription !== isSubscription)
@@ -150,7 +150,7 @@ export default function Settings({
       <div className="card">
         <h3>Re-categorize Imported Transactions</h3>
         <p className="muted settings-help">
-          Keyword changes only apply to new imports. Preview what the current keywords would change on transactions you already imported.
+          Keyword changes only apply to new imports. Preview what the current keywords would change on transactions you already imported or synced.
         </p>
         {recatChanges === null ? (
           <button className="btn-secondary" onClick={handlePreviewRecategorize}>Preview Changes</button>
