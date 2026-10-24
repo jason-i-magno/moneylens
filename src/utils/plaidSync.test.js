@@ -97,7 +97,7 @@ describe('applySyncResult', () => {
     });
     expect(next.plaid.items[0]).toMatchObject({
       cursor: 'cursor-1', lastSyncAt: OPTS.now, lastError: null, historyStatus: 'HISTORICAL_UPDATE_COMPLETE',
-      lastSummary: { added: 5, updated: 0, removed: 0, skipped: 0, balances: 0 },
+      lastSummary: { added: 5, updated: 0, removed: 0, skipped: 0, paired: 0, balances: 0 },
     });
   });
 
@@ -181,6 +181,75 @@ describe('applySyncResult', () => {
     expect(again.netWorth.snapshots.filter((s) => s.accountId === 'acct_1').map((s) => s.balance)).toEqual([1200]);
   });
 
+  describe('transfers between the connection\'s own accounts', () => {
+    const both = { acc_chk: 'plaid_acc_chk', acc_sav: 'plaid_acc_sav' };
+    const sav = (id, overrides) => ptx(id, { accountId: 'acc_sav', ...overrides });
+    const sync = (data, added, cursor = 0) => applySyncResult(data, 'item_1', result({
+      fromCursor: cursor ? `cursor-${cursor}` : '', nextCursor: `cursor-${cursor + 1}`, added,
+    }), { ...OPTS, ids: { tx: `tx_${cursor}`, acct: 'acct_1', snap: 'snap_1' } });
+    const view = (data) => data.transactions.map((t) => [t.plaidTransactionId, t.category, Boolean(t.pairedTransfer)]);
+
+    it('makes both sides transfers, but not a same-amount deposit from elsewhere', () => {
+      const next = sync(dataWith(item(both, [], [checking, savings])), [
+        ptx('to_sav', { amount: 500, name: 'TO SAVINGS', category: 'TRANSFER_OUT_SAVINGS' }),
+        sav('from_chk', { amount: -500, date: '2026-03-06', name: 'FROM CHECKING', category: 'TRANSFER_IN_ACCOUNT_TRANSFER' }),
+        sav('to_chk', { amount: 200, date: '2026-03-07', name: 'TO CHECKING', category: 'TRANSFER_OUT_ACCOUNT_TRANSFER' }),
+        ptx('from_sav', { amount: -200, date: '2026-03-07', name: 'FROM SAVINGS', category: 'TRANSFER_IN_ACCOUNT_TRANSFER' }),
+        ptx('outside', { amount: -500, name: 'OTHER BANK', category: 'TRANSFER_IN_ACCOUNT_TRANSFER' }), // same account as to_sav
+        sav('pay', { amount: -200, date: '2026-03-07', name: 'EMPLOYER PAYROLL', category: 'INCOME_WAGES' }),
+      ]);
+      expect(view(next)).toEqual([
+        ['to_sav', 'transfers', true],
+        ['from_chk', 'transfers', true],
+        ['to_chk', 'transfers', true],
+        ['from_sav', 'transfers', true],
+        ['outside', 'other', false],
+        ['pay', 'other', false],
+      ]);
+      expect(next.plaid.items[0].lastSummary.paired).toBe(2);
+    });
+
+    it('pairs the closest dates and leaves keyword categories alone', () => {
+      const next = sync(dataWith(item(both, [], [checking, savings])), [
+        ptx('early', { amount: 100, date: '2026-03-01', name: 'TO SAVINGS', category: 'TRANSFER_OUT_SAVINGS' }),
+        ptx('late', { amount: 100, date: '2026-03-04', name: 'TO SAVINGS', category: 'TRANSFER_OUT_SAVINGS' }),
+        sav('in', { amount: -100, date: '2026-03-04', name: 'FROM CHECKING', category: 'TRANSFER_IN_ACCOUNT_TRANSFER' }),
+        ptx('shop', { amount: 50, name: 'WHOLE FOODS #1', category: 'TRANSFER_OUT_ACCOUNT_TRANSFER' }),
+        sav('in2', { amount: -50, name: 'FROM CHECKING', category: 'TRANSFER_IN_ACCOUNT_TRANSFER' }),
+        ptx('far', { amount: 70, date: '2026-03-01', name: 'TO SAVINGS', category: 'TRANSFER_OUT_ACCOUNT_TRANSFER' }),
+        sav('in3', { amount: -70, date: '2026-03-05', name: 'FROM CHECKING', category: 'TRANSFER_IN_ACCOUNT_TRANSFER' }),
+      ]);
+      expect(view(next)).toEqual([
+        ['early', 'transfers', false],
+        ['late', 'transfers', true],
+        ['in', 'transfers', true],
+        ['shop', 'groceries', false],
+        ['in2', 'other', false],
+        ['far', 'other', false], // 4 days apart
+        ['in3', 'other', false],
+      ]);
+    });
+
+    it('pairs with a row from an earlier sync, and never re-pairs a row the user changed', () => {
+      let data = sync(dataWith(item(both, [], [checking, savings])), [
+        sav('in', { amount: -300, name: 'FROM CHECKING', category: 'TRANSFER_IN_ACCOUNT_TRANSFER' }),
+      ]);
+      expect(view(data)).toEqual([['in', 'other', false]]);
+
+      data = sync(data, [ptx('out', { amount: 300, date: '2026-03-06', name: 'TO SAVINGS', category: 'TRANSFER_OUT_ACCOUNT_TRANSFER' })], 1);
+      expect(view(data)).toEqual([['in', 'transfers', true], ['out', 'transfers', true]]);
+
+      data = { ...data, transactions: data.transactions.map((t) => ({ ...t, category: 'other' })) };
+      expect(view(sync(data, [], 2))).toEqual([['in', 'other', true], ['out', 'other', true]]);
+    });
+
+    it('stay transfers when re-categorized, unless a keyword matches', () => {
+      const paired = { name: 'FROM CHECKING', plaidCategory: 'TRANSFER_IN_ACCOUNT_TRANSFER', pairedTransfer: true };
+      expect(recategorizeStored([paired, { ...paired, pairedTransfer: undefined }, { ...paired, name: 'WHOLE FOODS' }])
+        .map((r) => r.category)).toEqual(['transfers', 'other', 'groceries']);
+    });
+  });
+
   it('never overwrites a balance the user entered for the same day', () => {
     const existing = { id: 'acct_1', name: 'X', type: 'asset', category: 'bank', linkedBankProfile: 'plaid_acc_chk' };
     const manual = { id: 'snap_1', accountId: 'acct_1', date: '2026-03-10', balance: 999, source: 'manual' };
@@ -226,6 +295,15 @@ describe('setPlaidItemError and plaidSourceOptions', () => {
   it('lists only Bank Sync sources, labelled for pickers', () => {
     const targets = { acc_chk: 'usbank_checking', acc_card: 'plaid_acc_card', acc_loan: null };
     expect(plaidSourceOptions({ items: [item(targets)] })).toEqual([['plaid_acc_card', { name: 'Test Bank Card ••2222 (Bank Sync)' }]]);
+  });
+
+  it('does not repeat the bank name when an account already starts with it', () => {
+    const named = { ...savings, name: 'Test Bank Savings' };
+    const data = applySyncResult(dataWith(item({ acc_sav: 'plaid_acc_sav' }, [], [named])), 'item_1', result({
+      accounts: [{ ...named, balance: 10 }],
+    }), OPTS);
+    expect(data.netWorth.accounts.map((a) => a.name)).toEqual(['Test Bank Savings ••1111']);
+    expect(plaidSourceOptions(data.plaid)[0][1].name).toBe('Test Bank Savings ••1111 (Bank Sync)');
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { isIncome, isSpending, sumByCategory } from './transactions';
-import { addDays, addMonths, todayISO, getMonthOptions } from './dates';
+import { addDays, addMonths, daysBetween, todayISO, getMonthOptions } from './dates';
 import { detectDateFormat, parseDate } from './csvParser';
 import { findDuplicates } from './duplicateDetector';
 import { makeId } from './ids';
@@ -41,6 +41,9 @@ describe('dates', () => {
     expect(addDays('2024-12-31', 1)).toBe('2025-01-01');
     expect(addMonths('2026-01', -1)).toBe('2025-12');
     expect(addMonths('2025-12', 1)).toBe('2026-01');
+    expect(daysBetween('2026-02-27', '2026-03-02')).toBe(3);
+    expect(daysBetween('2026-03-09', '2026-03-07')).toBe(-2);
+    expect(daysBetween('2026-03-07', '2026-03-09')).toBe(2); // spans the US DST change
   });
 
   it('lists months newest first and always includes the current month', () => {

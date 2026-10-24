@@ -87,13 +87,14 @@ export function categorizeBatch(transactions, keywords = DEFAULT_CATEGORY_KEYWOR
 }
 
 // Category and subscription flag for stored transactions (CSV or Bank Sync). Plaid's merchant
-// name is matched too, and Plaid's own category fills in when no keyword matches.
+// name is matched too, and when no keyword matches, a transfer between the user's own synced
+// accounts stays a transfer and anything else gets Plaid's own category.
 export function recategorizeStored(transactions, keywords = DEFAULT_CATEGORY_KEYWORDS) {
   return categorizeBatch(
     transactions.map((tx) => ({
       description: [tx.name, tx.merchantName].filter(Boolean).join(' '),
       category: null,
-      fallbackCategory: mapPlaidCategory(tx.plaidCategory),
+      fallbackCategory: tx.pairedTransfer ? 'transfers' : mapPlaidCategory(tx.plaidCategory),
     })),
     keywords
   ).map(({ category, isSubscription }) => ({ category, isSubscription }));

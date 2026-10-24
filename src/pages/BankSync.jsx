@@ -25,6 +25,7 @@ function summaryText(s) {
     s.updated && `${s.updated} updated`,
     s.removed && `${s.removed} removed`,
     s.skipped && `${s.skipped} already imported`,
+    s.paired && `${s.paired} transfer${s.paired === 1 ? '' : 's'} between your accounts`,
   ].filter(Boolean);
   return parts.length ? parts.join(' · ') : 'nothing new';
 }

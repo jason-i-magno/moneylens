@@ -131,6 +131,7 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
 - For an account continuing CSV history, `startDate` = latest CSV date for that source (set when the mapping is saved). Earlier Plaid rows are skipped; rows on that date are skipped one-for-one against CSV rows with the same type and amount.
 - Modified transactions update name/amount/date/type but keep the user's category. Removed ones are deleted.
 - Categories: keywords first (matched against the name plus Plaid's merchant name), then Plaid's `personal_finance_category` via `src/constants/plaidCategories.js`. Ambiguous transfers (deposits, generic account transfers) stay unmapped so they aren't hidden as transfers.
+- **Transfers between the connection's own accounts** (`pairOwnTransfers`): after each sync, a debit and a same-amount credit in two different synced accounts of the same connection, at most 3 days apart (closest first), both become `transfers` and get `pairedTransfer: true`. Both sides must be uncategorized with a `TRANSFER_*` Plaid category, or already transfers, so keyword and user categories are never overridden. Rows from earlier syncs take part (the other side can post later); a row is paired at most once, so a user's later change sticks. Re-categorizing keeps a paired row a transfer unless a keyword matches.
 - Balances become a `source: 'plaid'` snapshot for today on the Net Worth account linked to the target (created if missing), replacing an earlier Plaid snapshot that day; a manual or PDF snapshot for the same day wins.
 - "Change Accounts" deletes the item's synced transactions and the Net Worth accounts it created, then shows the setup again (no new Plaid connection needed).
 
@@ -261,7 +262,7 @@ Single localStorage key `moneylens-data`:
 
 - `type` exists only on imported and synced transactions; `isSubscription` is set on import (and by re-categorize).
 - `importedFrom` is the profile ID of the file the row came from, `"manual"` for an unsaved manual mapping, or a Bank Sync account's `target`.
-- `merchantName` and `plaidCategory` are present only when Plaid supplied them.
+- `merchantName` and `plaidCategory` are present only when Plaid supplied them; `pairedTransfer: true` only on matched Bank Sync transfers. Optional fields whose absence is the right default for old data need no migration.
 
 ### Schema versions and migration
 

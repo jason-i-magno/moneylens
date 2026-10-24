@@ -3,12 +3,20 @@
 // either a bank profile ID (continuing that bank's CSV history) or its own `plaid_<accountId>`.
 import { PLAID_INSTITUTION_PATTERNS, PROFILE_ACCOUNT_MAP } from '../constants/bankProfiles';
 import { getEffectiveKeywords, recategorizeStored } from './categorizer';
+import { daysBetween } from './dates';
 import { roundCents } from './transactions';
 
 export const plaidSourceId = (accountId) => `plaid_${accountId}`;
 const isPlaidSource = (target) => typeof target === 'string' && target.startsWith('plaid_');
 
 export const describePlaidAccount = (account) => `${account.name}${account.mask ? ` ••${account.mask}` : ''}`;
+
+// Institution + account, without repeating a bank that already names its accounts after itself
+function plaidAccountLabel(institutionName, account) {
+  const label = describePlaidAccount(account);
+  if (!institutionName || label.toLowerCase().startsWith(institutionName.toLowerCase())) return label;
+  return `${institutionName} ${label}`;
+}
 
 const NET_WORTH_KIND = {
   depository: { type: 'asset', category: 'bank' },
@@ -85,6 +93,51 @@ function toFields(ptx) {
   };
 }
 
+const PAIR_WINDOW_DAYS = 3;
+
+// Only uncategorized transfers and rows already marked as transfers are paired, so a category set by
+// a keyword or by the user is never overridden.
+const canPair = (tx) => !tx.pairedTransfer
+  && (tx.category === 'transfers' || (tx.category === 'other' && Boolean(tx.plaidCategory?.startsWith('TRANSFER_'))));
+
+// A move between two accounts of one connection (checking → savings) appears in both. Plaid often
+// labels a side as a generic account transfer, which stays uncategorized and would count as income or
+// spending. Pairs a debit with a same-amount credit in another of the accounts, closest dates first,
+// and makes both transfers. `pairedTransfer` keeps them paired through re-categorizing.
+function pairOwnTransfers(transactions, accountIds) {
+  const debitsByAmount = new Map();
+  const credits = [];
+  transactions.forEach((tx, i) => {
+    if (tx.source !== 'plaid' || !accountIds.has(tx.plaidAccountId) || !canPair(tx)) return;
+    if (tx.type === 'credit') credits.push(i);
+    else debitsByAmount.set(tx.amount, [...(debitsByAmount.get(tx.amount) || []), i]);
+  });
+
+  const candidates = [];
+  for (const c of credits) {
+    const credit = transactions[c];
+    for (const d of debitsByAmount.get(credit.amount) || []) {
+      const debit = transactions[d];
+      const gap = Math.abs(daysBetween(debit.date, credit.date));
+      if (debit.plaidAccountId !== credit.plaidAccountId && gap <= PAIR_WINDOW_DAYS) candidates.push({ d, c, gap });
+    }
+  }
+  candidates.sort((a, b) => a.gap - b.gap);
+
+  const paired = new Set();
+  for (const { d, c } of candidates) {
+    if (paired.has(d) || paired.has(c)) continue;
+    paired.add(d);
+    paired.add(c);
+  }
+  return {
+    transactions: paired.size
+      ? transactions.map((tx, i) => (paired.has(i) ? { ...tx, category: 'transfers', pairedTransfer: true } : tx))
+      : transactions,
+    pairs: paired.size / 2,
+  };
+}
+
 // Applies one sync result. Returns `data` unchanged when the result is stale (the item's cursor has
 // moved on, e.g. the same sync ran twice), which makes applying a result idempotent.
 // `ids` = { tx, acct, snap } prefixes from makeId; records get `_N` appended.
@@ -93,7 +146,7 @@ export function applySyncResult(data, itemId, result, { ids, now, today }) {
   if (!item || item.cursor !== result.fromCursor) return data;
 
   const accountsById = new Map(item.accounts.map((a) => [a.id, a]));
-  const summary = { added: 0, updated: 0, removed: 0, skipped: 0, balances: 0 };
+  const summary = { added: 0, updated: 0, removed: 0, skipped: 0, paired: 0, balances: 0 };
 
   const removedIds = new Set(result.removed);
   let transactions = data.transactions.filter((tx) => !(tx.plaidTransactionId && removedIds.has(tx.plaidTransactionId)));
@@ -167,6 +220,11 @@ export function applySyncResult(data, itemId, result, { ids, now, today }) {
   }));
   summary.added = newTxs.length;
 
+  // Earlier syncs' rows take part too: the other side of a transfer can post a day later
+  const syncedAccountIds = new Set(item.accounts.filter((a) => a.target).map((a) => a.id));
+  const { transactions: allTransactions, pairs } = pairOwnTransfers([...transactions, ...newTxs], syncedAccountIds);
+  summary.paired = pairs;
+
   // Balances become today's snapshot on the Net Worth account linked to the same source
   let nwAccounts = data.netWorth.accounts;
   let snapshots = data.netWorth.snapshots;
@@ -180,7 +238,7 @@ export function applySyncResult(data, itemId, result, { ids, now, today }) {
     if (!nwAccount) {
       const kind = PROFILE_ACCOUNT_MAP[acct.target] || NET_WORTH_KIND[pa.type] || NET_WORTH_KIND.depository;
       nwAccount = {
-        name: PROFILE_ACCOUNT_MAP[acct.target]?.name || `${item.institutionName} ${describePlaidAccount(pa)}`,
+        name: PROFILE_ACCOUNT_MAP[acct.target]?.name || plaidAccountLabel(item.institutionName, pa),
         type: kind.type,
         category: kind.category,
         linkedBankProfile: acct.target,
@@ -205,7 +263,7 @@ export function applySyncResult(data, itemId, result, { ids, now, today }) {
 
   return {
     ...data,
-    transactions: [...transactions, ...newTxs],
+    transactions: allTransactions,
     netWorth: { ...data.netWorth, accounts: nwAccounts, snapshots },
     plaid: { ...data.plaid, items },
   };
@@ -245,5 +303,5 @@ export function removePlaidItem(data, itemId, { deleteSyncedData = false } = {})
 export function plaidSourceOptions(plaid) {
   return plaid.items.flatMap((item) => item.accounts
     .filter((a) => isPlaidSource(a.target))
-    .map((a) => [a.target, { name: `${item.institutionName} ${describePlaidAccount(a)} (Bank Sync)` }]));
+    .map((a) => [a.target, { name: `${plaidAccountLabel(item.institutionName, a)} (Bank Sync)` }]));
 }
