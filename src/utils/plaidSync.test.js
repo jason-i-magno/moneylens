@@ -332,6 +332,9 @@ describe('Plaid categories', () => {
     ['INCOME_TAX_REFUND', 'refunds'],
     ['INCOME_OTHER_INCOME', 'other_income'],
     ['LOAN_DISBURSEMENTS_OTHER_DISBURSEMENT', 'transfers'], // how Plaid labels a payment received on a card
+    ['TRAVEL_FLIGHTS', 'travel'],
+    ['TRAVEL_LODGING', 'travel'],
+    ['TRAVEL_RENTAL_CARS', 'transport'],
     [null, null],
   ])('%s → %s', (detailed, expected) => {
     expect(mapPlaidCategory(detailed)).toBe(expected);

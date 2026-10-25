@@ -38,6 +38,7 @@ const BASE_CATEGORY_KEYWORDS = {
   ],
   insurance: ['insurance', 'geico', 'state farm', 'allstate', 'progressive', 'premium'],
   betting: ['casino', 'sportsbook', 'lottery'],
+  travel: ['airline', 'airbnb', 'vrbo', 'hotel', 'motel', 'resort', 'expedia', 'booking.com'],
   // Money in: these apply only to credits, and a debit never gets an income category
   salary: ['payroll', 'salary', 'direct dep', 'dir dep'],
   interest: ['interest', 'dividend'],

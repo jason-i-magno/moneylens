@@ -11,6 +11,7 @@ export const SPENDING_CATEGORIES = [
   { id: 'insurance', name: 'Insurance', icon: '\u{1F6E1}\u{FE0F}', color: '#A3E87C' },
   { id: 'subscriptions', name: 'Subscriptions', icon: '\u{1F504}', color: '#E87CE8' },
   { id: 'betting', name: 'Gambling', icon: '\u{1F3B2}', color: '#E8D44C' },
+  { id: 'travel', name: 'Travel', icon: '\u{2708}\u{FE0F}', color: '#4A6CF0' },
   { id: 'transfers', name: 'Transfers', icon: '\u{1F501}', color: '#6B7280' },
   { id: 'other', name: 'Other', icon: '\u{1F4E6}', color: '#9CA3AF' },
 ];

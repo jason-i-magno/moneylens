@@ -43,6 +43,7 @@ const PRIMARY = {
   MEDICAL: 'health',
   TRANSPORTATION: 'transport',
   RENT_AND_UTILITIES: 'utilities',
+  TRAVEL: 'travel', // flights, lodging; rental cars stay Transport (above)
 };
 
 export function mapPlaidCategory(detailed) {

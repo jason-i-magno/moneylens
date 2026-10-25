@@ -18,7 +18,7 @@ describe('categorizeTransaction', () => {
     // Keywords must start at a word boundary
     ['CURRENT FINANCIAL', 'other'],
     ['PARENTPAY', 'other'],
-    ['LAS VEGAS HOTEL', 'other'],
+    ['LAS VEGAS SOUVENIRS', 'other'],
     ['SMALL CUP COFFEE', 'dining'],
     ['SHELL GAS #123', 'transport'],
     ['RENT PAYMENT', 'housing'],
@@ -132,6 +132,15 @@ describe('money in vs money out', () => {
       ['WALMART', true, 'transfers'],
       ['PAYCHECK', false, 'salary'], // an income category on a debit
     ])).toEqual(['salary', 'transfers', 'other']);
+  });
+
+  it('files flights and lodging under Travel, and a refund from them under Refunds', () => {
+    expect(run([
+      ['SKYHIGH AIRLINES 123', false],
+      ['CITY CENTER HOTEL', false],
+      ['SKYHIGH AIRLINES 123', true],
+      ['AIRLINE TRIP', false, null, 'Travel'], // a bank category column naming it
+    ])).toEqual(['travel', 'travel', 'refunds', 'travel']);
   });
 
   it('matches keywords across padded spaces', () => {
