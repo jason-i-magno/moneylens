@@ -331,6 +331,7 @@ describe('Plaid categories', () => {
     ['INCOME_SALARY', 'salary'],
     ['INCOME_TAX_REFUND', 'refunds'],
     ['INCOME_OTHER_INCOME', 'other_income'],
+    ['LOAN_DISBURSEMENTS_OTHER_DISBURSEMENT', 'transfers'], // how Plaid labels a payment received on a card
     [null, null],
   ])('%s → %s', (detailed, expected) => {
     expect(mapPlaidCategory(detailed)).toBe(expected);
@@ -340,6 +341,22 @@ describe('Plaid categories', () => {
     expect(recategorizeStored([{ name: 'WHOLE FOODS #1234' }, { name: 'MYSTERY' }])).toEqual([
       { category: 'groceries', isSubscription: false },
       { category: 'other', isSubscription: false },
+    ]);
+  });
+});
+
+describe('card payments received through Bank Sync', () => {
+  it('are transfers, not income', () => {
+    const cardOnly = { acc_card: 'plaid_acc_card' };
+    const next = applySyncResult(dataWith(item(cardOnly, [], [card])), 'item_1', result({
+      added: [
+        ptx('pay', { accountId: 'acc_card', amount: -120, name: 'PAYMENT RECEIVED', category: 'LOAN_DISBURSEMENTS_OTHER_DISBURSEMENT' }),
+        ptx('buy', { accountId: 'acc_card', amount: 120, name: 'CORNER SHOP', category: 'GENERAL_MERCHANDISE_OTHER_GENERAL_MERCHANDISE' }),
+      ],
+    }), OPTS);
+    expect(next.transactions.map((t) => [t.plaidTransactionId, t.type, t.category])).toEqual([
+      ['pay', 'credit', 'transfers'],
+      ['buy', 'debit', 'shopping'],
     ]);
   });
 });

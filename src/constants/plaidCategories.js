@@ -34,6 +34,8 @@ const DETAILED = {
 
 const PRIMARY = {
   INCOME: 'other_income',
+  // Loan proceeds are borrowed money, not income; Plaid also files payments received on a credit card here
+  LOAN_DISBURSEMENTS: 'transfers',
   FOOD_AND_DRINK: 'dining',
   ENTERTAINMENT: 'entertainment',
   GENERAL_MERCHANDISE: 'shopping',
