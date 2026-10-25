@@ -243,6 +243,15 @@ describe('applySyncResult', () => {
       expect(view(sync(data, [], 2))).toEqual([['in', 'other', true], ['out', 'other', true]]);
     });
 
+    it('never pairs a row whose category the user set by hand', () => {
+      let data = sync(dataWith(item(both, [], [checking, savings])), [
+        sav('in', { amount: -300, name: 'FROM CHECKING', category: 'TRANSFER_IN_ACCOUNT_TRANSFER' }),
+      ]);
+      data = { ...data, transactions: data.transactions.map((t) => ({ ...t, categorySetByUser: true })) };
+      data = sync(data, [ptx('out', { amount: 300, name: 'TO SAVINGS', category: 'TRANSFER_OUT_ACCOUNT_TRANSFER' })], 1);
+      expect(view(data)).toEqual([['in', 'other', false], ['out', 'other', false]]);
+    });
+
     it('stay transfers when re-categorized, unless a keyword matches', () => {
       const paired = { name: 'FROM CHECKING', plaidCategory: 'TRANSFER_IN_ACCOUNT_TRANSFER', pairedTransfer: true };
       expect(recategorizeStored([paired, { ...paired, pairedTransfer: undefined }, { ...paired, name: 'WHOLE FOODS' }])

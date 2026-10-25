@@ -110,7 +110,7 @@ export default function Import({ data, finance }) {
   // Step 2: Preview
   const handleCategoryChange = (index, category) => {
     setTransactions((prev) =>
-      prev.map((tx) => (tx.index === index ? { ...tx, category } : tx))
+      prev.map((tx) => (tx.index === index ? { ...tx, category, categorySetByUser: true } : tx))
     );
   };
 

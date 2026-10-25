@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { isIncome, isSpending, sumByCategory } from './transactions';
+import { applyTransactionEdit, isIncome, isSpending, sumByCategory } from './transactions';
 import { addDays, addMonths, daysBetween, todayISO, getMonthOptions } from './dates';
 import { detectDateFormat, parseDate } from './csvParser';
 import { findDuplicates } from './duplicateDetector';
@@ -22,6 +22,13 @@ describe('income and spending rules', () => {
       { category: 'dining', amount: 0.1 },
       { category: 'dining', amount: 0.2 },
     ])).toEqual({ dining: 0.3 });
+  });
+
+  it('marks a category changed in the edit form as set by the user', () => {
+    const imported = { id: 'tx_1', source: 'csv_import', name: 'CHECK', category: 'other', amount: 50 };
+    expect(applyTransactionEdit(imported, { name: 'CHECK', category: 'housing' })).toMatchObject({ category: 'housing', categorySetByUser: true });
+    expect(applyTransactionEdit(imported, { name: 'CHECK 101', category: 'other' })).not.toHaveProperty('categorySetByUser');
+    expect(applyTransactionEdit({ ...imported, source: 'manual' }, { category: 'housing' })).not.toHaveProperty('categorySetByUser');
   });
 });
 

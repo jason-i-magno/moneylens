@@ -11,6 +11,13 @@ export const sumAmounts = (txs) => txs.reduce((sum, tx) => sum + tx.amount, 0);
 
 export const roundCents = (n) => Math.round(n * 100) / 100;
 
+// An edit from the transaction form. Changing the category of an imported or synced transaction
+// marks it as the user's choice, which Re-categorize and Bank Sync's transfer matching then keep.
+export function applyTransactionEdit(tx, changes) {
+  const byUser = tx.source !== 'manual' && 'category' in changes && changes.category !== tx.category;
+  return { ...tx, ...changes, ...(byUser && { categorySetByUser: true }) };
+}
+
 export function sumByCategory(txs) {
   const map = {};
   for (const tx of txs) {

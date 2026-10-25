@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from 'react';
 import { CATEGORY_MAP } from '../constants/categories';
-import { diffKeywords, getEffectiveKeywords, recategorizeStored } from '../utils/categorizer';
+import { diffKeywords, getEffectiveKeywords, proposeRecategorization } from '../utils/categorizer';
 
 const formatKeywords = (added, removed) => JSON.stringify(getEffectiveKeywords(added, removed), null, 2);
 
@@ -50,25 +50,20 @@ export default function Settings({
   };
 
   // Re-run auto-categorization on imported and synced transactions and propose the differences.
-  // Manual transactions are left alone; the user unticks any row they corrected by hand.
+  // Manual transactions and categories set by hand are left out.
   const handlePreviewRecategorize = () => {
-    const imported = data.transactions.filter((tx) => tx.source === 'csv_import' || tx.source === 'plaid');
-    const recategorized = recategorizeStored(imported, effectiveKeywords);
-    const changes = recategorized
-      .map((r, i) => ({ tx: imported[i], category: r.category, isSubscription: r.isSubscription }))
-      .filter(({ tx, category, isSubscription }) => tx.category !== category || !!tx.isSubscription !== isSubscription)
-      .map((c) => ({ ...c, apply: true }));
-    setRecatChanges(changes);
+    setRecatChanges(proposeRecategorization(data.transactions, effectiveKeywords).map((c) => ({ ...c, apply: true })));
   };
 
   const toggleRecatChange = (id) => {
     setRecatChanges((prev) => prev.map((c) => (c.tx.id === id ? { ...c, apply: !c.apply } : c)));
   };
 
+  // An unticked row keeps its category as the user's own, so it isn't proposed again
   const handleApplyRecategorize = () => {
     const changesById = {};
     for (const c of recatChanges) {
-      if (c.apply) changesById[c.tx.id] = { category: c.category, isSubscription: c.isSubscription };
+      changesById[c.tx.id] = c.apply ? { category: c.category, isSubscription: c.isSubscription } : { categorySetByUser: true };
     }
     updateTransactions(changesById);
     setRecatChanges(null);
@@ -108,6 +103,7 @@ export default function Settings({
 
   const profiles = Object.entries(data.bankProfiles || {});
   const applyCount = recatChanges?.filter((c) => c.apply).length || 0;
+  const keepCount = (recatChanges?.length || 0) - applyCount;
 
   return (
     <div className="page settings">
@@ -151,6 +147,7 @@ export default function Settings({
         <h3>Re-categorize Imported Transactions</h3>
         <p className="muted settings-help">
           Keyword changes only apply to new imports. Preview what the current keywords would change on transactions you already imported or synced.
+          Categories you changed by hand are never touched. Untick a row to keep its category as yours: it won&apos;t be suggested again.
         </p>
         {recatChanges === null ? (
           <button className="btn-secondary" onClick={handlePreviewRecategorize}>Preview Changes</button>
@@ -180,8 +177,8 @@ export default function Settings({
               </table>
             </div>
             <div className="modal-actions">
-              <button className="btn-primary" onClick={handleApplyRecategorize} disabled={applyCount === 0}>
-                Apply {applyCount} Change{applyCount !== 1 ? 's' : ''}
+              <button className="btn-primary" onClick={handleApplyRecategorize}>
+                Apply {applyCount} Change{applyCount !== 1 ? 's' : ''}{keepCount > 0 && `, Keep ${keepCount}`}
               </button>
               <button className="btn-secondary" onClick={() => setRecatChanges(null)}>Cancel</button>
             </div>

@@ -3,6 +3,7 @@ import { createDefaultData, migrateData } from '../utils/migrate';
 import { makeId } from '../utils/ids';
 import { todayISO } from '../utils/dates';
 import { applySyncResult, removePlaidItem as removeItem, setPlaidItemError as setItemError } from '../utils/plaidSync';
+import { applyTransactionEdit } from '../utils/transactions';
 
 const STORAGE_KEY = 'moneylens-data';
 
@@ -62,10 +63,11 @@ export function useFinanceData() {
     update((d) => ({ ...d, transactions: [...d.transactions, newTx] }));
   }, [update]);
 
+  // From the edit form; see applyTransactionEdit
   const updateTransaction = useCallback((id, changes) => {
     update((d) => ({
       ...d,
-      transactions: d.transactions.map((t) => (t.id === id ? { ...t, ...changes } : t)),
+      transactions: d.transactions.map((t) => (t.id === id ? applyTransactionEdit(t, changes) : t)),
     }));
   }, [update]);
 
@@ -92,6 +94,7 @@ export function useFinanceData() {
       category: tx.category,
       type: tx.isDebit ? 'debit' : 'credit',
       isSubscription: tx.isSubscription || false,
+      ...(tx.categorySetByUser && { categorySetByUser: true }), // picked in the import preview
       date: tx.date,
       source: 'csv_import',
       importedFrom: tx.profileId || 'manual',

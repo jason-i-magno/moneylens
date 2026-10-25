@@ -99,3 +99,12 @@ export function recategorizeStored(transactions, keywords = DEFAULT_CATEGORY_KEY
     keywords
   ).map(({ category, isSubscription }) => ({ category, isSubscription }));
 }
+
+// What Re-categorize would change: imported and synced transactions whose category or subscription
+// flag differs from what the keywords give now. Categories the user set by hand are left out.
+export function proposeRecategorization(transactions, keywords = DEFAULT_CATEGORY_KEYWORDS) {
+  const candidates = transactions.filter((tx) => (tx.source === 'csv_import' || tx.source === 'plaid') && !tx.categorySetByUser);
+  return recategorizeStored(candidates, keywords)
+    .map((r, i) => ({ tx: candidates[i], category: r.category, isSubscription: r.isSubscription }))
+    .filter(({ tx, category, isSubscription }) => tx.category !== category || !!tx.isSubscription !== isSubscription);
+}

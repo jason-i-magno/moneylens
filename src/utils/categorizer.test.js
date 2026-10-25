@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  categorizeTransaction, categorizeBatch, isSubscription, getEffectiveKeywords, diffKeywords,
+  categorizeTransaction, categorizeBatch, isSubscription, getEffectiveKeywords, diffKeywords, proposeRecategorization,
 } from './categorizer';
 import { DEFAULT_CATEGORY_KEYWORDS } from '../constants/defaultKeywords';
 
@@ -85,5 +85,18 @@ describe('keyword overrides', () => {
     expect(getEffectiveKeywords()).toEqual(
       expect.objectContaining({ transfers: DEFAULT_CATEGORY_KEYWORDS.transfers })
     );
+  });
+});
+
+describe('proposeRecategorization', () => {
+  it('proposes changes for imported and synced rows, skipping manual ones and categories set by hand', () => {
+    const txs = [
+      { id: 'csv', source: 'csv_import', name: 'WHOLE FOODS #1', category: 'other' },
+      { id: 'synced', source: 'plaid', name: 'SHELL OIL 1', category: 'other', plaidCategory: 'TRANSPORTATION_GAS' },
+      { id: 'mine', source: 'csv_import', name: 'WHOLE FOODS #2', category: 'other', categorySetByUser: true },
+      { id: 'manual', source: 'manual', name: 'WHOLE FOODS #3', category: 'other' },
+      { id: 'same', source: 'csv_import', name: 'WHOLE FOODS #4', category: 'groceries' },
+    ];
+    expect(proposeRecategorization(txs).map((c) => [c.tx.id, c.category])).toEqual([['csv', 'groceries'], ['synced', 'transport']]);
   });
 });
