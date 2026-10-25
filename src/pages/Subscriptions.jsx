@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import Modal from '../components/Modal';
 import SubscriptionCard from '../components/SubscriptionCard';
 import EmptyState from '../components/EmptyState';
-import { CATEGORIES, CATEGORY_MAP, formatCurrency } from '../constants/categories';
+import { SPENDING_CATEGORIES, CATEGORY_MAP, formatCurrency } from '../constants/categories';
 import { getMonthlyAmount } from '../utils/subscriptions';
 import { isCredit } from '../utils/transactions';
 
@@ -152,7 +152,7 @@ export default function Subscriptions({ data, addSubscription, updateSubscriptio
         <div className="form-group">
           <label>Category</label>
           <select value={form.category} onChange={set('category')}>
-            {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+            {SPENDING_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
           </select>
         </div>
         <div className="form-group">

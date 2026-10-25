@@ -1,8 +1,8 @@
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Cell, ReferenceLine, ResponsiveContainer } from 'recharts';
-import { CATEGORIES, formatCurrency } from '../constants/categories';
+import { SPENDING_CATEGORIES, formatCurrency } from '../constants/categories';
 
 export default function CategoryChart({ spending, budgets = {} }) {
-  const chartData = CATEGORIES
+  const chartData = SPENDING_CATEGORIES
     .map((cat) => ({
       name: cat.name,
       id: cat.id,

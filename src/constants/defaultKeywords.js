@@ -38,6 +38,11 @@ const BASE_CATEGORY_KEYWORDS = {
   ],
   insurance: ['insurance', 'geico', 'state farm', 'allstate', 'progressive', 'premium'],
   betting: ['casino', 'sportsbook', 'lottery'],
+  // Money in: these apply only to credits, and a debit never gets an income category
+  salary: ['payroll', 'salary', 'direct dep', 'dir dep'],
+  interest: ['interest', 'dividend'],
+  refunds: ['refund', 'irs treas', 'tax ref', 'dept revenue', 'dept of revenue'],
+  benefits: ['unemployment', 'ssa treas', 'social security', 'pension', 'disability'],
   // Card payment descriptors for the built-in bank profiles, so they aren't counted as spending
   transfers: [
     'amex epayment', 'pmt discover', 'card payment', 'credit card payment',

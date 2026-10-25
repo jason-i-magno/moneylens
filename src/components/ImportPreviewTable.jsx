@@ -1,5 +1,4 @@
-import { CATEGORIES } from '../constants/categories';
-import { formatCurrency } from '../constants/categories';
+import { categoriesFor, formatCurrency } from '../constants/categories';
 
 export default function ImportPreviewTable({ transactions, onCategoryChange, onToggleSkip }) {
   return (
@@ -35,7 +34,7 @@ export default function ImportPreviewTable({ transactions, onCategoryChange, onT
                   value={tx.category}
                   onChange={(e) => onCategoryChange(tx.index, e.target.value)}
                 >
-                  {CATEGORIES.map((c) => (
+                  {categoriesFor(tx.isDebit === false).map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </select>

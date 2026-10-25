@@ -97,8 +97,9 @@ const PAIR_WINDOW_DAYS = 3;
 
 // Only uncategorized transfers and rows already marked as transfers are paired, so a category set by
 // a keyword or by the user is never overridden.
+const UNCATEGORIZED = new Set(['other', 'other_income']);
 const canPair = (tx) => !tx.pairedTransfer && !tx.categorySetByUser
-  && (tx.category === 'transfers' || (tx.category === 'other' && Boolean(tx.plaidCategory?.startsWith('TRANSFER_'))));
+  && (tx.category === 'transfers' || (UNCATEGORIZED.has(tx.category) && Boolean(tx.plaidCategory?.startsWith('TRANSFER_'))));
 
 // A move between two accounts of one connection (checking → savings) appears in both. Plaid often
 // labels a side as a generic account transfer, which stays uncategorized and would count as income or

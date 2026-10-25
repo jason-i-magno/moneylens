@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import Modal from '../components/Modal';
 import MiniBar from '../components/MiniBar';
 import EmptyState from '../components/EmptyState';
-import { CATEGORIES, formatCurrency } from '../constants/categories';
+import { CATEGORIES, SPENDING_CATEGORIES, formatCurrency } from '../constants/categories';
 import { currentMonth } from '../utils/dates';
 import { isSpending, sumByCategory } from '../utils/transactions';
 
@@ -86,7 +86,7 @@ export default function Budgets({ data, setBudget, deleteBudget }) {
           <label>Category</label>
           <select value={editCat} onChange={(e) => setEditCat(e.target.value)}>
             <option value="">Select...</option>
-            {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+            {SPENDING_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
           </select>
         </div>
         <div className="form-group">

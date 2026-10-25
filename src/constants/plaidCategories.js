@@ -21,9 +21,19 @@ const DETAILED = {
   GENERAL_SERVICES_INSURANCE: 'insurance',
   GENERAL_SERVICES_AUTOMOTIVE: 'transport',
   TRAVEL_RENTAL_CARS: 'transport',
+  // Money in (any other INCOME_* is Other Income)
+  INCOME_WAGES: 'salary',
+  INCOME_SALARY: 'salary',
+  INCOME_DIVIDENDS: 'interest',
+  INCOME_INTEREST_EARNED: 'interest',
+  INCOME_TAX_REFUND: 'refunds',
+  INCOME_UNEMPLOYMENT: 'benefits',
+  INCOME_RETIREMENT_PENSION: 'benefits',
+  INCOME_LONG_TERM_DISABILITY: 'benefits',
 };
 
 const PRIMARY = {
+  INCOME: 'other_income',
   FOOD_AND_DRINK: 'dining',
   ENTERTAINMENT: 'entertainment',
   GENERAL_MERCHANDISE: 'shopping',

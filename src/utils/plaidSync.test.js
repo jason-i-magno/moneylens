@@ -85,7 +85,7 @@ describe('applySyncResult', () => {
 
     expect(next.transactions.map((t) => [t.plaidTransactionId, t.type, t.amount, t.category, t.isSubscription])).toEqual([
       ['p1', 'debit', 42.5, 'groceries', false],
-      ['p2', 'credit', 1500, 'other', false],
+      ['p2', 'credit', 1500, 'salary', false], // money in gets an income category
       ['p3', 'debit', 30, 'transport', false], // no keyword: Plaid's category fills in
       ['p4', 'debit', 15.49, 'entertainment', true], // keyword found in the merchant name
       ['p5', 'debit', 5, 'dining', false], // a keyword beats Plaid's category
@@ -203,8 +203,8 @@ describe('applySyncResult', () => {
         ['from_chk', 'transfers', true],
         ['to_chk', 'transfers', true],
         ['from_sav', 'transfers', true],
-        ['outside', 'other', false],
-        ['pay', 'other', false],
+        ['outside', 'other_income', false],
+        ['pay', 'salary', false],
       ]);
       expect(next.plaid.items[0].lastSummary.paired).toBe(2);
     });
@@ -224,9 +224,9 @@ describe('applySyncResult', () => {
         ['late', 'transfers', true],
         ['in', 'transfers', true],
         ['shop', 'groceries', false],
-        ['in2', 'other', false],
+        ['in2', 'other_income', false],
         ['far', 'other', false], // 4 days apart
-        ['in3', 'other', false],
+        ['in3', 'other_income', false],
       ]);
     });
 
@@ -234,7 +234,7 @@ describe('applySyncResult', () => {
       let data = sync(dataWith(item(both, [], [checking, savings])), [
         sav('in', { amount: -300, name: 'FROM CHECKING', category: 'TRANSFER_IN_ACCOUNT_TRANSFER' }),
       ]);
-      expect(view(data)).toEqual([['in', 'other', false]]);
+      expect(view(data)).toEqual([['in', 'other_income', false]]);
 
       data = sync(data, [ptx('out', { amount: 300, date: '2026-03-06', name: 'TO SAVINGS', category: 'TRANSFER_OUT_ACCOUNT_TRANSFER' })], 1);
       expect(view(data)).toEqual([['in', 'transfers', true], ['out', 'transfers', true]]);
@@ -249,7 +249,7 @@ describe('applySyncResult', () => {
       ]);
       data = { ...data, transactions: data.transactions.map((t) => ({ ...t, categorySetByUser: true })) };
       data = sync(data, [ptx('out', { amount: 300, name: 'TO SAVINGS', category: 'TRANSFER_OUT_ACCOUNT_TRANSFER' })], 1);
-      expect(view(data)).toEqual([['in', 'other', false], ['out', 'other', false]]);
+      expect(view(data)).toEqual([['in', 'other_income', false], ['out', 'other', false]]);
     });
 
     it('stay transfers when re-categorized, unless a keyword matches', () => {
@@ -328,6 +328,9 @@ describe('Plaid categories', () => {
     ['MEDICAL_VETERINARY_SERVICES', 'other'],
     ['RENT_AND_UTILITIES_RENT', 'housing'],
     ['RENT_AND_UTILITIES_TELEPHONE', 'utilities'],
+    ['INCOME_SALARY', 'salary'],
+    ['INCOME_TAX_REFUND', 'refunds'],
+    ['INCOME_OTHER_INCOME', 'other_income'],
     [null, null],
   ])('%s → %s', (detailed, expected) => {
     expect(mapPlaidCategory(detailed)).toBe(expected);

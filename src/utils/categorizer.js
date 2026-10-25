@@ -1,14 +1,15 @@
 import { DEFAULT_CATEGORY_KEYWORDS, DEFAULT_SUBSCRIPTION_KEYWORDS } from '../constants/defaultKeywords';
-import { CATEGORIES, CATEGORY_MAP } from '../constants/categories';
+import { CATEGORIES, CATEGORY_MAP, isIncomeCategory } from '../constants/categories';
 import { mapPlaidCategory } from '../constants/plaidCategories';
 
 const CATEGORY_ORDER = Object.fromEntries(CATEGORIES.map((c, i) => [c.id, i]));
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-// Keyword must start at a word boundary: 'rent' matches "RENT PMT" but not "PARENT" or "CURRENT"
+// Keyword must start at a word boundary: 'rent' matches "RENT PMT" but not "PARENT" or "CURRENT".
+// A space matches any run of whitespace, since banks pad descriptions ("IRS  TREAS 310").
 function keywordRegex(keyword) {
-  return new RegExp(`(?:^|[^a-z0-9])${escapeRegex(keyword.toLowerCase())}`, 'i');
+  return new RegExp(`(?:^|[^a-z0-9])${escapeRegex(keyword.toLowerCase()).replace(/ +/g, '\\s+')}`, 'i');
 }
 
 // Effective keywords = code defaults − user removals + user additions.
@@ -57,12 +58,28 @@ function compileMatchers(keywords) {
   return matchers.sort((a, b) => b.length - a.length || a.order - b.order);
 }
 
-function matchCategory(description, matchers, fallback = 'other') {
-  return matchers.find((m) => m.regex.test(description))?.category || fallback;
+// Money in takes income categories (and Transfers), money out the spending ones
+const fitsDirection = (category, isCredit) => category === 'transfers' || isIncomeCategory(category) === isCredit;
+
+// The longest keyword of a category that fits the direction; for money in, also the longest of any
+// category, because a store's keyword on a credit means a refund of a purchase
+function matchCategory(description, matchers, isCredit) {
+  const fitting = matchers.find((m) => fitsDirection(m.category, isCredit) && m.regex.test(description))?.category || null;
+  const refund = !fitting && isCredit && matchers.some((m) => m.regex.test(description));
+  return { fitting, refund };
 }
 
+// A category that fits the direction: an unknown or store category on a credit becomes Other Income
+// or Refunds, and an income category on a debit becomes Other
+function fitToDirection(category, isCredit) {
+  if (category && fitsDirection(category, isCredit)) return category;
+  if (!isCredit) return 'other';
+  return category && category !== 'other' ? 'refunds' : 'other_income';
+}
+
+// For a debit (money out)
 export function categorizeTransaction(description, keywords = DEFAULT_CATEGORY_KEYWORDS) {
-  return matchCategory(description, compileMatchers(keywords));
+  return matchCategory(description, compileMatchers(keywords), false).fitting || 'other';
 }
 
 export function isSubscription(description, keywords = DEFAULT_SUBSCRIPTION_KEYWORDS) {
@@ -76,14 +93,19 @@ function normalizeBankCategory(raw) {
   return CATEGORIES.find((c) => c.id === lower || c.name.toLowerCase() === lower)?.id || null;
 }
 
-// `fallbackCategory` (optional, per row) replaces 'other' when no keyword matches
+// A row is money in when `isCredit` is set (stored and synced rows) or `isDebit` is false (CSV rows).
+// Order: the bank's own category, a keyword of the right direction, then `fallbackCategory` (optional,
+// per row: Plaid's category). On money in, a store keyword makes it a refund, unless the fallback
+// already says income or transfer.
 export function categorizeBatch(transactions, keywords = DEFAULT_CATEGORY_KEYWORDS) {
   const matchers = compileMatchers(keywords);
-  return transactions.map((tx) => ({
-    ...tx,
-    category: normalizeBankCategory(tx.category) || matchCategory(tx.description, matchers, tx.fallbackCategory || 'other'),
-    isSubscription: isSubscription(tx.description),
-  }));
+  return transactions.map((tx) => {
+    const isCredit = tx.isCredit ?? tx.isDebit === false;
+    const { fitting, refund } = matchCategory(tx.description, matchers, isCredit);
+    let category = normalizeBankCategory(tx.category) || fitting;
+    if (!category) category = refund && !fitsDirection(tx.fallbackCategory, true) ? 'refunds' : tx.fallbackCategory;
+    return { ...tx, category: fitToDirection(category, isCredit), isSubscription: isSubscription(tx.description) };
+  });
 }
 
 // Category and subscription flag for stored transactions (CSV or Bank Sync). Plaid's merchant
@@ -94,6 +116,7 @@ export function recategorizeStored(transactions, keywords = DEFAULT_CATEGORY_KEY
     transactions.map((tx) => ({
       description: [tx.name, tx.merchantName].filter(Boolean).join(' '),
       category: null,
+      isCredit: tx.type === 'credit',
       fallbackCategory: tx.pairedTransfer ? 'transfers' : mapPlaidCategory(tx.plaidCategory),
     })),
     keywords

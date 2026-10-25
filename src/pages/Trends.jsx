@@ -1,14 +1,16 @@
 import { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { CATEGORIES, CATEGORY_MAP, formatCurrency } from '../constants/categories';
+import { CATEGORIES, CATEGORY_MAP, INCOME_CATEGORIES, SPENDING_CATEGORIES, formatCurrency } from '../constants/categories';
 import EmptyState from '../components/EmptyState';
 import { isIncome, isSpending, isTransfer } from '../utils/transactions';
 
-function buildSpendingData(transactions, groupBy) {
+// Totals per period and per category for the transactions `include` picks (spending or income).
+// Daily view is cumulative.
+function buildCategoryData(transactions, include, groupBy) {
   const buckets = {};
 
   transactions
-    .filter(isSpending)
+    .filter(include)
     .forEach((tx) => {
       if (!tx.date) return;
       const key = groupBy === 'daily' ? tx.date : tx.date.slice(0, 7);
@@ -40,37 +42,6 @@ function buildSpendingData(transactions, groupBy) {
         runCats[c.id] += row[c.id];
         row[c.id] = Math.round(runCats[c.id] * 100) / 100;
       });
-    }
-  }
-
-  return sorted;
-}
-
-function buildIncomeData(transactions, groupBy) {
-  const buckets = {};
-
-  transactions
-    .filter(isIncome)
-    .forEach((tx) => {
-      if (!tx.date) return;
-      const key = groupBy === 'daily' ? tx.date : tx.date.slice(0, 7);
-      if (!buckets[key]) {
-        buckets[key] = { label: key, total: 0 };
-      }
-      buckets[key].total += tx.amount;
-    });
-
-  for (const b of Object.values(buckets)) {
-    b.total = Math.round(b.total * 100) / 100;
-  }
-
-  const sorted = Object.values(buckets).sort((a, b) => a.label.localeCompare(b.label));
-
-  if (groupBy === 'daily') {
-    let runTotal = 0;
-    for (const row of sorted) {
-      runTotal += row.total;
-      row.total = Math.round(runTotal * 100) / 100;
     }
   }
 
@@ -132,25 +103,64 @@ const XAXIS_PROPS = (groupBy) => ({
   height: groupBy === 'daily' ? 60 : 30,
 });
 
+// Total plus one toggle per category that has data; doubles as the legend
+function SeriesToggles({ categories, visible, onToggle }) {
+  return (
+    <div className="trends-toggles">
+      <button
+        className={`trend-toggle ${visible.total ? 'active' : ''}`}
+        style={visible.total ? { backgroundColor: '#E8E4DD', color: '#1A1A1F' } : {}}
+        onClick={() => onToggle('total')}
+      >
+        Total
+      </button>
+      {categories.map((c) => (
+        <button
+          key={c.id}
+          className={`trend-toggle ${visible[c.id] ? 'active' : ''}`}
+          style={visible[c.id] ? { backgroundColor: c.color + '33', color: c.color, borderColor: c.color } : {}}
+          onClick={() => onToggle(c.id)}
+        >
+          {c.icon} {c.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Recharts needs <Line>s as direct children of the chart, so this returns elements rather than a component
+function seriesLines(categories, visible, dotProps, dotPropsSmall) {
+  return [
+    visible.total && (
+      <Line key="total" type="monotone" dataKey="total" name="total" stroke="#E8E4DD" strokeWidth={2.5} dot={dotProps} activeDot={{ r: 6 }} />
+    ),
+    ...categories.map((c) => visible[c.id] && (
+      <Line key={c.id} type="monotone" dataKey={c.id} name={c.id} stroke={c.color} strokeWidth={2} dot={dotPropsSmall} activeDot={{ r: 5 }} />
+    )),
+  ];
+}
+
+const seriesName = (name) => (name === 'total' ? 'Total' : (CATEGORY_MAP[name]?.name || name));
+
 export default function Trends({ data }) {
-  const [visible, setVisible] = useState(() => {
-    const init = { total: true };
-    CATEGORIES.forEach((c) => { init[c.id] = false; });
-    return init;
-  });
+  const [visible, setVisible] = useState({ total: true });
+  const [incomeVisible, setIncomeVisible] = useState({ total: true });
   const [groupBy, setGroupBy] = useState('monthly');
 
   const toggle = (key) => {
     setVisible((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+  const toggleIncome = (key) => {
+    setIncomeVisible((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const spendingData = useMemo(
-    () => buildSpendingData(data.transactions, groupBy),
+    () => buildCategoryData(data.transactions, isSpending, groupBy),
     [data.transactions, groupBy]
   );
 
   const incomeData = useMemo(
-    () => buildIncomeData(data.transactions, groupBy),
+    () => buildCategoryData(data.transactions, isIncome, groupBy),
     [data.transactions, groupBy]
   );
 
@@ -164,6 +174,13 @@ export default function Trends({ data }) {
       spendingData.some((d) => d[c.id] > 0)
     );
   }, [spendingData]);
+
+  // Income categories first; any other category on income (e.g. Other before re-categorizing) after
+  const activeIncomeCategories = useMemo(() => {
+    return [...INCOME_CATEGORIES, ...SPENDING_CATEGORIES].filter((c) =>
+      incomeData.some((d) => d[c.id] > 0)
+    );
+  }, [incomeData]);
 
   const hasData = spendingData.length > 0 || incomeData.length > 0;
 
@@ -202,44 +219,18 @@ export default function Trends({ data }) {
       {spendingData.length > 0 && (
         <div className="card">
           <h3>Spending</h3>
-          <div className="trends-toggles">
-            <button
-              className={`trend-toggle ${visible.total ? 'active' : ''}`}
-              style={visible.total ? { backgroundColor: '#E8E4DD', color: '#1A1A1F' } : {}}
-              onClick={() => toggle('total')}
-            >
-              Total
-            </button>
-            {activeCategories.map((c) => (
-              <button
-                key={c.id}
-                className={`trend-toggle ${visible[c.id] ? 'active' : ''}`}
-                style={visible[c.id] ? { backgroundColor: c.color + '33', color: c.color, borderColor: c.color } : {}}
-                onClick={() => toggle(c.id)}
-              >
-                {c.icon} {c.name}
-              </button>
-            ))}
-          </div>
-
+          <SeriesToggles categories={activeCategories} visible={visible} onToggle={toggle} />
           <ResponsiveContainer width="100%" height={400}>
             <LineChart data={spendingData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
               <XAxis {...XAXIS_PROPS(groupBy)} />
               <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={90} />
               <Tooltip
-                formatter={(value, name) => [formatCurrency(value), name === 'total' ? 'Total' : (CATEGORY_MAP[name]?.name || name)]}
+                formatter={(value, name) => [formatCurrency(value), seriesName(name)]}
                 {...TOOLTIP_STYLE}
                 itemSorter={(item) => -item.value}
               />
-              {visible.total && (
-                <Line type="monotone" dataKey="total" name="total" stroke="#E8E4DD" strokeWidth={2.5} dot={dotProps} activeDot={{ r: 6 }} />
-              )}
-              {activeCategories.map((c) =>
-                visible[c.id] ? (
-                  <Line key={c.id} type="monotone" dataKey={c.id} name={c.id} stroke={c.color} strokeWidth={2} dot={dotPropsSmall} activeDot={{ r: 5 }} />
-                ) : null
-              )}
+              {seriesLines(activeCategories, visible, dotProps, dotPropsSmall)}
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -248,16 +239,18 @@ export default function Trends({ data }) {
       {incomeData.length > 0 && (
         <div className="card">
           <h3>Income</h3>
+          <SeriesToggles categories={activeIncomeCategories} visible={incomeVisible} onToggle={toggleIncome} />
           <ResponsiveContainer width="100%" height={350}>
             <LineChart data={incomeData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
               <XAxis {...XAXIS_PROPS(groupBy)} />
               <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={90} />
               <Tooltip
-                formatter={(value) => [formatCurrency(value), 'Income']}
+                formatter={(value, name) => [formatCurrency(value), seriesName(name)]}
                 {...TOOLTIP_STYLE}
+                itemSorter={(item) => -item.value}
               />
-              <Line type="monotone" dataKey="total" name="Income" stroke="#7CE8A3" strokeWidth={2.5} dot={dotProps} activeDot={{ r: 6 }} />
+              {seriesLines(activeIncomeCategories, incomeVisible, dotProps, dotPropsSmall)}
             </LineChart>
           </ResponsiveContainer>
         </div>

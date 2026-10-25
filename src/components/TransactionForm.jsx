@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CATEGORIES } from '../constants/categories';
+import { CATEGORY_MAP, categoriesFor } from '../constants/categories';
 import { todayISO } from '../utils/dates';
 
 // Mount with a `key` per transaction so the form resets between edits
@@ -10,6 +10,11 @@ export default function TransactionForm({ transaction, onSave }) {
       : { name: '', amount: '', category: 'other', date: todayISO() }
   ));
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  // Money in gets income categories; a category from before those existed (Other on a credit) stays selectable
+  const choices = categoriesFor(transaction?.type === 'credit');
+  const legacy = transaction && !choices.some((c) => c.id === transaction.category) ? CATEGORY_MAP[transaction.category] : null;
+  const options = legacy ? [...choices, legacy] : choices;
 
   return (
     <>
@@ -24,7 +29,7 @@ export default function TransactionForm({ transaction, onSave }) {
       <div className="form-group">
         <label>Category</label>
         <select value={form.category} onChange={set('category')}>
-          {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
+          {options.map((c) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
         </select>
       </div>
       <div className="form-group">

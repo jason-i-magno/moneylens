@@ -39,7 +39,7 @@ Run `npm run lint && npm test && npm run build` before calling a change done.
 
 - **Theme:** Dark UI (`#1A1A1F` background, `#222228` cards, `#E8E4DD` text)
 - **Accent colors:** Warm gradient (`#E8927C` coral → `#C97CE8` purple) for primary actions
-- **Category colors:** each spending category has a unique color (table below)
+- **Category colors:** each spending and income category has its own color (see [Categories](#categories))
 - **Typography:** DM Sans (Google Fonts). No generic system fonts.
 - **Tone:** Clean, modern, slightly warm. Not corporate. Premium personal tool.
 - **Rounded corners:** 10-14px on cards and buttons
@@ -70,7 +70,7 @@ All rules live in `src/utils/transactions.js` — use these helpers, never re-im
 | `/subscriptions` | Subscriptions | Manual subscriptions (add/edit/delete, normalized monthly cost) plus "Detected from Imports": imported transactions with `isSubscription`, grouped by merchant |
 | `/spending` | Spending | Debits by month with category and subscription filters; add/edit/delete; header total excludes transfers unless the Transfers filter is selected |
 | `/income` | Income | Credits by month; edit/delete; header splits income from transfers-in (not counted) |
-| `/trends` | Trends | Monthly or daily (cumulative) line charts: spending by category, income, net |
+| `/trends` | Trends | Monthly or daily (cumulative) line charts: spending by category, income by category (toggles like spending), net |
 | `/budgets` | Budgets | Monthly cap per category with progress bars (red when over); shows categories with a budget or spending |
 | `/mortgage` | Mortgage | Properties, loans, payments; amortization vs. actual; extra-payment impact; combined view across a refi; statement PDF import; JSON import/export; delete payments/loans/properties |
 | `/net-worth` | Net Worth | Accounts (assets/liabilities) with balance snapshots; live balances for accounts linked to a bank profile; mortgage loans and properties included automatically; US Bank statement PDF import |
@@ -130,15 +130,16 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
 - A result applies only if its `fromCursor` equals the item's current cursor, so a duplicate or stale sync is a no-op.
 - For an account continuing CSV history, `startDate` = latest CSV date for that source (set when the mapping is saved). Earlier Plaid rows are skipped; rows on that date are skipped one-for-one against CSV rows with the same type and amount.
 - Modified transactions update name/amount/date/type but keep the user's category. Removed ones are deleted.
-- Categories: keywords first (matched against the name plus Plaid's merchant name), then Plaid's `personal_finance_category` via `src/constants/plaidCategories.js`. Ambiguous transfers (deposits, generic account transfers) stay unmapped so they aren't hidden as transfers.
-- **Transfers between the connection's own accounts** (`pairOwnTransfers`): after each sync, a debit and a same-amount credit in two different synced accounts of the same connection, at most 3 days apart (closest first), both become `transfers` and get `pairedTransfer: true`. Both sides must be uncategorized with a `TRANSFER_*` Plaid category, or already transfers, and neither may have `categorySetByUser`, so keyword and user categories are never overridden. Rows from earlier syncs take part (the other side can post later); a row is paired at most once, so a user's later change sticks. Re-categorizing keeps a paired row a transfer unless a keyword matches.
+- Categories: keywords first (matched against the name plus Plaid's merchant name), then Plaid's `personal_finance_category` via `src/constants/plaidCategories.js` (its `INCOME_*` categories map to income categories), following the money-in/money-out rules under Auto-Categorization. Ambiguous transfers (deposits, generic account transfers) stay unmapped so they aren't hidden as transfers.
+- **Transfers between the connection's own accounts** (`pairOwnTransfers`): after each sync, a debit and a same-amount credit in two different synced accounts of the same connection, at most 3 days apart (closest first), both become `transfers` and get `pairedTransfer: true`. Both sides must be uncategorized (`other` / `other_income`) with a `TRANSFER_*` Plaid category, or already transfers, and neither may have `categorySetByUser`, so keyword and user categories are never overridden. Rows from earlier syncs take part (the other side can post later); a row is paired at most once, so a user's later change sticks. Re-categorizing keeps a paired row a transfer unless a keyword matches.
 - Balances become a `source: 'plaid'` snapshot for today on the Net Worth account linked to the target (created if missing), replacing an earlier Plaid snapshot that day; a manual or PDF snapshot for the same day wins.
 - "Change Accounts" deletes the item's synced transactions and the Net Worth accounts it created, then shows the setup again (no new Plaid connection needed).
 
 ## Auto-Categorization (`src/utils/categorizer.js`)
 
-- Matching is case-insensitive, and a keyword must **start at a word boundary** (`rent` matches "RENT PMT", not "PARENT"; `gas` doesn't match "VEGAS").
+- Matching is case-insensitive, and a keyword must **start at a word boundary** (`rent` matches "RENT PMT", not "PARENT"; `gas` doesn't match "VEGAS"). A space in a keyword matches any run of whitespace, because banks pad descriptions ("IRS  TREAS 310").
 - When several keywords match, the **longest keyword wins** (`uber eats` beats `uber`; `internet payment - thank you` beats `internet`). Ties go to the category listed first in `CATEGORIES`.
+- **Direction decides the kind of category** (`categorizeBatch`): money out (debits, manual entries) gets spending categories only, and an income keyword on a debit is ignored (`interest` doesn't turn "INTEREST CHARGE" into income). Money in (credits) gets income categories: an income or transfer keyword first, then Plaid's category if it says income or transfer, then a store keyword means **Refunds** (a credit from Amazon is a refund), then Plaid's store category (also Refunds), else **Other Income**. Transfers fit both directions.
 - Keyword lists: `DEFAULT_CATEGORY_KEYWORDS` and `DEFAULT_SUBSCRIPTION_KEYWORDS` in `src/constants/defaultKeywords.js` = generic base lists + the private keywords file (below). Prefer specific multi-word keywords; short generic ones cause false matches.
 - **Private keywords:** merchants, banks, and services specific to the user go in `src/constants/privateKeywords.local.js` (gitignored via `*.local.js`), never in `defaultKeywords.js`. It's loaded with `import.meta.glob` when present and skipped when absent or under Vitest, so a fresh clone and the tests run without it. Format:
   ```js
@@ -151,9 +152,11 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
 - **Categories set by hand are kept.** `categorySetByUser: true` marks them: set when the user changes the category of an imported or synced transaction in the edit form (`applyTransactionEdit`) or the import preview, or leaves a row unticked in the Re-categorize preview. Re-categorize never proposes those rows again, and Bank Sync's transfer matching skips them.
 - If you retire a default keyword, add it to `RETIRED_DEFAULT_KEYWORDS` in `src/utils/migrate.js` so v1 migration doesn't mistake it for a user addition.
 
-## Spending Categories
+## Categories
 
-Defined in `src/constants/categories.js`; use these IDs everywhere:
+Defined in `src/constants/categories.js` (`SPENDING_CATEGORIES`, `INCOME_CATEGORIES`, both in `CATEGORIES`); use these IDs everywhere. Pickers use `categoriesFor(isCredit)`: money in gets the income categories and Transfers, money out the spending ones. Budgets, subscriptions and the dashboard chart are spending-only.
+
+### Spending categories
 
 | ID             | Name                 | Icon | Color     |
 |----------------|----------------------|------|-----------|
@@ -172,6 +175,19 @@ Defined in `src/constants/categories.js`; use these IDs everywhere:
 | other          | Other                | 📦   | `#9CA3AF` |
 
 `subscriptions` has no default keywords. Subscription charges are categorized by what they are (e.g. Netflix → entertainment) and flagged with `isSubscription` instead.
+
+### Income categories
+
+| ID             | Name                 | Icon | Color     |
+|----------------|----------------------|------|-----------|
+| salary         | Salary               | 💼   | `#5FD99B` |
+| interest       | Interest             | 🏦   | `#6FB8F0` |
+| refunds        | Refunds              | ↩️   | `#F0C05A` |
+| benefits       | Benefits             | 🛟   | `#A99CF5` |
+| gifts          | Gifts                | 🎁   | `#F58C8C` |
+| other_income   | Other Income         | 💰   | `#9CA3AF` |
+
+The five colored ones are in fixed order and were checked for telling apart on the dark card surface (adjacent pairs, normal and color-blind vision); Other Income is gray like Other. Income categories only label income: the money rules above are unchanged, so a refund still counts as income. Credits stored as `other` before income categories existed are re-categorized to an income category by Settings → Re-categorize.
 
 ## Net Worth
 
@@ -292,7 +308,7 @@ moneylens/
     ├── App.jsx                    # Routes, lazy pages, passes finance hook down as props
     ├── App.css
     ├── constants/
-    │   ├── categories.js          # CATEGORIES, CATEGORY_MAP, formatCurrency
+    │   ├── categories.js          # Spending + income categories, CATEGORY_MAP, categoriesFor, formatCurrency
     │   ├── defaultKeywords.js     # Generic category + subscription keywords (+ private file if present)
     │   ├── privateKeywords.local.js  # Gitignored: the user's personal keywords (may not exist)
     │   ├── plaidCategories.js     # Plaid personal_finance_category → our category (fallback)

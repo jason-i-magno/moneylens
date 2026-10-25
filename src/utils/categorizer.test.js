@@ -100,3 +100,41 @@ describe('proposeRecategorization', () => {
     expect(proposeRecategorization(txs).map((c) => [c.tx.id, c.category])).toEqual([['csv', 'groceries'], ['synced', 'transport']]);
   });
 });
+
+describe('money in vs money out', () => {
+  const run = (rows) => categorizeBatch(rows.map(([description, isCredit, fallbackCategory, category = null]) => ({
+    description, isCredit, fallbackCategory, category,
+  }))).map((r) => r.category);
+
+  it('gives credits income categories and debits spending ones', () => {
+    expect(run([
+      ['ACME CORP PAYROLL', true],
+      ['INTEREST PAID', true],
+      ['INTEREST CHARGE ON PURCHASES', false], // an income keyword never applies to money out
+      ['MOBILE PAYMENT - THANK YOU', true], // transfers fit both directions
+      ['MYSTERY DEPOSIT', true],
+      ['MYSTERY CHARGE', false],
+    ])).toEqual(['salary', 'interest', 'other', 'transfers', 'other_income', 'other']);
+  });
+
+  it('treats a credit from a store as a refund', () => {
+    expect(run([
+      ['AMAZON MKTPLACE', true],
+      ['WHOLE FOODS #1', true, null, 'Groceries'], // the bank's own category, on a credit
+      ['STORE 123', true, 'shopping'], // Plaid says shopping
+      ['STORE 123', true, 'other'],
+    ])).toEqual(['refunds', 'refunds', 'refunds', 'other_income']);
+  });
+
+  it('lets Plaid say income or transfer before guessing a refund', () => {
+    expect(run([
+      ['WALMART', true, 'salary'], // an employer that is also a store
+      ['WALMART', true, 'transfers'],
+      ['PAYCHECK', false, 'salary'], // an income category on a debit
+    ])).toEqual(['salary', 'transfers', 'other']);
+  });
+
+  it('matches keywords across padded spaces', () => {
+    expect(run([['ELECTRONIC DEPOSIT IRS  TREAS 310', true], ['WHOLE   FOODS #2', false]])).toEqual(['refunds', 'groceries']);
+  });
+});
