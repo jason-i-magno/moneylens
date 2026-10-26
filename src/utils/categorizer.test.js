@@ -112,9 +112,10 @@ describe('money in vs money out', () => {
       ['INTEREST PAID', true],
       ['INTEREST CHARGE ON PURCHASES', false], // an income keyword never applies to money out
       ['MOBILE PAYMENT - THANK YOU', true], // transfers fit both directions
+      ['INTERNET PAYMENT - THANKYOU', true], // a card payment, not a refund from an internet provider
       ['MYSTERY DEPOSIT', true],
       ['MYSTERY CHARGE', false],
-    ])).toEqual(['salary', 'interest', 'other', 'transfers', 'other_income', 'other']);
+    ])).toEqual(['salary', 'interest', 'other', 'transfers', 'transfers', 'other_income', 'other']);
   });
 
   it('treats a credit from a store as a refund', () => {

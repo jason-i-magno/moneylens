@@ -48,7 +48,7 @@ const BASE_CATEGORY_KEYWORDS = {
   transfers: [
     'amex epayment', 'pmt discover', 'card payment', 'credit card payment',
     'mobile payment - thank you', 'redeem cash back',
-    'internet payment - thank you', 'automatic statement credit',
+    'internet payment - thank you', 'internet payment - thankyou', 'automatic statement credit',
   ],
 };
 
