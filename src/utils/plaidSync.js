@@ -46,13 +46,22 @@ export function defaultTargets(accounts, { institutionName, env, takenTargets = 
   return targets;
 }
 
-// Latest date already imported (by CSV) into a source; Bank Sync starts there
+// Latest date already imported (by CSV) into a source; Bank Sync adds what comes after it
 export function latestImportedDate(transactions, target) {
   let latest = null;
   for (const tx of transactions) {
     if (tx.importedFrom === target && tx.source !== 'plaid' && (!latest || tx.date > latest)) latest = tx.date;
   }
   return latest;
+}
+
+// Earliest date imported by CSV into a source; Bank Sync adds the older history before it
+export function earliestImportedDate(transactions, target) {
+  let earliest = null;
+  for (const tx of transactions) {
+    if (tx.importedFrom === target && tx.source !== 'plaid' && (!earliest || tx.date < earliest)) earliest = tx.date;
+  }
+  return earliest;
 }
 
 export function buildPlaidItem({ itemId, institutionName, env }, accounts, targets, transactions) {
@@ -158,14 +167,19 @@ export function applySyncResult(data, itemId, result, { ids, now, today }) {
     if (tx.plaidTransactionId) indexByPlaidId.set(tx.plaidTransactionId, i);
   });
 
-  // CSV rows on each account's start date, so a day covered by both isn't imported twice
-  const csvOnStartDate = new Map();
+  // An account continuing CSV history: the CSVs cover its first CSV date through `startDate` (the last).
+  // Rows inside are already imported and rows before it are older history to add. The two edge days may
+  // be only partly covered, so their rows are matched one-for-one against the CSV rows.
+  const csvFirst = new Map(); // account id → first CSV date
+  const csvOnEdgeDays = new Map();
   for (const acct of item.accounts) {
     if (!acct.target || !acct.startDate) continue;
+    const first = earliestImportedDate(transactions, acct.target) || acct.startDate;
+    csvFirst.set(acct.id, first);
     for (const tx of transactions) {
-      if (tx.importedFrom !== acct.target || tx.date !== acct.startDate || tx.source === 'plaid') continue;
+      if (tx.importedFrom !== acct.target || tx.source === 'plaid' || (tx.date !== first && tx.date !== acct.startDate)) continue;
       const key = sameDayKey(tx.importedFrom, tx.date, tx.type || 'debit', tx.amount);
-      csvOnStartDate.set(key, (csvOnStartDate.get(key) || 0) + 1);
+      csvOnEdgeDays.set(key, (csvOnEdgeDays.get(key) || 0) + 1);
     }
   }
 
@@ -185,15 +199,16 @@ export function applySyncResult(data, itemId, result, { ids, now, today }) {
       fresh.set(ptx.id, { ...fresh.get(ptx.id), fields });
       continue;
     }
-    if (acct.startDate && fields.date < acct.startDate) {
+    const first = csvFirst.get(acct.id);
+    if (first && fields.date > first && fields.date < acct.startDate) {
       summary.skipped++;
       continue;
     }
-    if (acct.startDate && fields.date === acct.startDate) {
+    if (first && (fields.date === first || fields.date === acct.startDate)) {
       const key = sameDayKey(acct.target, fields.date, fields.type, fields.amount);
-      const left = csvOnStartDate.get(key) || 0;
+      const left = csvOnEdgeDays.get(key) || 0;
       if (left > 0) {
-        csvOnStartDate.set(key, left - 1);
+        csvOnEdgeDays.set(key, left - 1);
         summary.skipped++;
         continue;
       }

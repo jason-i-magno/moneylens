@@ -4,7 +4,7 @@ import EmptyState from '../components/EmptyState';
 import { BUILTIN_BANK_PROFILES } from '../constants/bankProfiles';
 import { openPlaidLink, plaidRequest } from '../utils/plaidClient';
 import {
-  buildPlaidItem, defaultTargets, describePlaidAccount, latestImportedDate, plaidSourceId,
+  buildPlaidItem, defaultTargets, describePlaidAccount, earliestImportedDate, latestImportedDate, plaidSourceId,
 } from '../utils/plaidSync';
 
 const TRIAL_LIMIT = 10;
@@ -291,7 +291,7 @@ function AccountSetup({ serverItem, env, transactions, profiles, takenTargets, b
       </div>
       <p className="muted settings-help">
         Pick where each account&apos;s transactions go.
-        {env === 'production' && ' To continue a bank you already import by CSV, choose its profile: Bank Sync then adds only transactions after your last import.'}
+        {env === 'production' && ' To continue a bank you already import by CSV, choose its profile: Bank Sync then skips what your CSVs cover and adds the history before and after them.'}
       </p>
       {error && <p className="error-text">{error}</p>}
       {!accounts && !error && <p className="muted">Loading accounts…</p>}
@@ -299,6 +299,7 @@ function AccountSetup({ serverItem, env, transactions, profiles, takenTargets, b
       {accounts?.map((a) => {
         const target = chosen[a.id] || '';
         const startDate = target ? latestImportedDate(transactions, target) : null;
+        const firstDate = target ? earliestImportedDate(transactions, target) : null;
         return (
           <div key={a.id} className="bank-account-row">
             <div className="bank-account-info">
@@ -312,7 +313,7 @@ function AccountSetup({ serverItem, env, transactions, profiles, takenTargets, b
                 <option key={id} value={id} disabled={takenTargets.has(id)}>Continue {p.name}</option>
               ))}
             </select>
-            {startDate && <p className="bank-account-note muted">Already imported through {startDate}. Only newer transactions will be added.</p>}
+            {startDate && <p className="bank-account-note muted">Your CSVs cover {firstDate} to {startDate}. Bank Sync adds only what falls before or after that.</p>}
             {(a.type === 'loan' || a.type === 'investment') && !target && (
               <p className="bank-account-note muted">Not synced by default: loan payments and trades would show up as income and spending.</p>
             )}

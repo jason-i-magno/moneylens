@@ -134,7 +134,7 @@ describe('applySyncResult', () => {
     expect(next.plaid.items[0].lastSummary.removed).toBe(1);
   });
 
-  it('skips what CSV imports already cover', () => {
+  it('skips what CSV imports cover and adds the history before and after it', () => {
     const csv = [
       { id: 'tx_1', importedFrom: 'usbank_checking', source: 'csv_import', type: 'debit', date: '2026-03-04', amount: 20, name: 'CORNER SHOP' },
       { id: 'tx_2', importedFrom: 'usbank_checking', source: 'csv_import', type: 'debit', date: '2026-03-04', amount: 20, name: 'CORNER SHOP' },
@@ -144,7 +144,10 @@ describe('applySyncResult', () => {
     const data = dataWith(item(targets, csv), { transactions: csv });
     const next = applySyncResult(data, 'item_1', result({
       added: [
-        ptx('old', { date: '2026-03-01', amount: 9 }), // before the start date
+        ptx('older', { date: '2026-02-20', amount: 11 }), // before the CSV history: added
+        ptx('old', { date: '2026-03-01', amount: 9 }), // on the first CSV day and in the CSV
+        ptx('oldExtra', { date: '2026-03-01', amount: 9 }), // a second one the CSV didn't have
+        ptx('inside', { date: '2026-03-02', amount: 5 }), // inside the CSV history
         ptx('dup1', { date: '2026-03-04' }), ptx('dup2', { date: '2026-03-04' }), // both already in the CSV
         ptx('extra', { date: '2026-03-04' }), // a third identical charge the CSV didn't have
         ptx('other', { date: '2026-03-04', amount: 7 }), // same day, different amount
@@ -152,9 +155,9 @@ describe('applySyncResult', () => {
       ],
     }), OPTS);
     const synced = next.transactions.filter((t) => t.source === 'plaid');
-    expect(synced.map((t) => t.plaidTransactionId)).toEqual(['extra', 'other', 'new']);
+    expect(synced.map((t) => t.plaidTransactionId)).toEqual(['older', 'oldExtra', 'extra', 'other', 'new']);
     expect(synced.every((t) => t.importedFrom === 'usbank_checking')).toBe(true);
-    expect(next.plaid.items[0].lastSummary).toMatchObject({ added: 3, skipped: 3 });
+    expect(next.plaid.items[0].lastSummary).toMatchObject({ added: 5, skipped: 4 });
   });
 
   it('records balances as snapshots on new or existing Net Worth accounts', () => {
