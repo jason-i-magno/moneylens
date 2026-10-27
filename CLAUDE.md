@@ -70,7 +70,7 @@ All rules live in `src/utils/transactions.js` — use these helpers, never re-im
 | `/subscriptions` | Subscriptions | Manual subscriptions (add/edit/delete, normalized monthly cost) plus "Detected from Imports": imported transactions with `isSubscription`, grouped by merchant |
 | `/spending` | Spending | Debits by month with category and subscription filters; add/edit/delete; header total excludes transfers unless the Transfers filter is selected |
 | `/income` | Income | Credits by month; edit/delete; header splits income from transfers-in (not counted) |
-| `/trends` | Trends | Monthly or daily (cumulative) line charts: spending by category, income by category (toggles like spending), net |
+| `/trends` | Trends | Spending by category, income by category and net (income / spending / net), each with series toggles, monthly or daily; each period's own total as bars, or the running total (Cumulative) as lines. Builders in `src/utils/trends.js` |
 | `/budgets` | Budgets | Monthly cap per category with progress bars (red when over); shows categories with a budget or spending |
 | `/mortgage` | Mortgage | Properties, loans, payments; amortization vs. actual; extra-payment impact; combined view across a refi; statement PDF import; JSON import/export; delete payments/loans/properties |
 | `/net-worth` | Net Worth | Accounts (assets/liabilities) with balance snapshots; live balances for accounts linked to a bank profile; mortgage loans and properties included automatically; US Bank statement PDF import |
@@ -333,6 +333,7 @@ moneylens/
     │   ├── dates.js               # Local-date helpers (todayISO, currentMonth, addDays, …)
     │   ├── ids.js                 # makeId
     │   ├── subscriptions.js       # getMonthlyAmount
+    │   ├── trends.js              # Per-period and cumulative totals for the Trends charts
     │   └── *.test.js              # Vitest unit tests
     ├── components/
     │   ├── Layout.jsx             # Header, nav, Suspense around routes

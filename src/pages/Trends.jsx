@@ -1,93 +1,9 @@
 import { useState, useMemo } from 'react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
-import { CATEGORIES, CATEGORY_MAP, INCOME_CATEGORIES, SPENDING_CATEGORIES, formatCurrency } from '../constants/categories';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
+import { CATEGORIES, INCOME_CATEGORIES, SPENDING_CATEGORIES, formatCurrency } from '../constants/categories';
 import EmptyState from '../components/EmptyState';
-import { isIncome, isSpending, isTransfer } from '../utils/transactions';
-
-// Totals per period and per category for the transactions `include` picks (spending or income).
-// Daily view is cumulative.
-function buildCategoryData(transactions, include, groupBy) {
-  const buckets = {};
-
-  transactions
-    .filter(include)
-    .forEach((tx) => {
-      if (!tx.date) return;
-      const key = groupBy === 'daily' ? tx.date : tx.date.slice(0, 7);
-      if (!buckets[key]) {
-        buckets[key] = { label: key, total: 0 };
-        CATEGORIES.forEach((c) => { buckets[key][c.id] = 0; });
-      }
-      buckets[key][tx.category] = (buckets[key][tx.category] || 0) + tx.amount;
-      buckets[key].total += tx.amount;
-    });
-
-  for (const b of Object.values(buckets)) {
-    b.total = Math.round(b.total * 100) / 100;
-    CATEGORIES.forEach((c) => {
-      b[c.id] = Math.round(b[c.id] * 100) / 100;
-    });
-  }
-
-  const sorted = Object.values(buckets).sort((a, b) => a.label.localeCompare(b.label));
-
-  if (groupBy === 'daily') {
-    let runTotal = 0;
-    const runCats = {};
-    CATEGORIES.forEach((c) => { runCats[c.id] = 0; });
-    for (const row of sorted) {
-      runTotal += row.total;
-      row.total = Math.round(runTotal * 100) / 100;
-      CATEGORIES.forEach((c) => {
-        runCats[c.id] += row[c.id];
-        row[c.id] = Math.round(runCats[c.id] * 100) / 100;
-      });
-    }
-  }
-
-  return sorted;
-}
-
-function buildNetData(transactions, groupBy) {
-  const buckets = {};
-
-  transactions
-    .filter((tx) => !isTransfer(tx))
-    .forEach((tx) => {
-      if (!tx.date) return;
-      const key = groupBy === 'daily' ? tx.date : tx.date.slice(0, 7);
-      if (!buckets[key]) {
-        buckets[key] = { label: key, income: 0, spending: 0, net: 0 };
-      }
-      if (isIncome(tx)) {
-        buckets[key].income += tx.amount;
-      } else {
-        buckets[key].spending += tx.amount;
-      }
-    });
-
-  for (const b of Object.values(buckets)) {
-    b.income = Math.round(b.income * 100) / 100;
-    b.spending = Math.round(b.spending * 100) / 100;
-    b.net = Math.round((b.income - b.spending) * 100) / 100;
-  }
-
-  const sorted = Object.values(buckets).sort((a, b) => a.label.localeCompare(b.label));
-
-  if (groupBy === 'daily') {
-    let runIncome = 0;
-    let runSpending = 0;
-    for (const row of sorted) {
-      runIncome += row.income;
-      runSpending += row.spending;
-      row.income = Math.round(runIncome * 100) / 100;
-      row.spending = Math.round(runSpending * 100) / 100;
-      row.net = Math.round((runIncome - runSpending) * 100) / 100;
-    }
-  }
-
-  return sorted;
-}
+import { isIncome, isSpending } from '../utils/transactions';
+import { buildCategoryData, buildNetData } from '../utils/trends';
 
 const TOOLTIP_STYLE = {
   contentStyle: { backgroundColor: '#222228', border: '1px solid #333', borderRadius: 8 },
@@ -103,70 +19,94 @@ const XAXIS_PROPS = (groupBy) => ({
   height: groupBy === 'daily' ? 60 : 30,
 });
 
-// Total plus one toggle per category that has data; doubles as the legend
-function SeriesToggles({ categories, visible, onToggle }) {
+// One toggle per series; doubles as the legend. A `strong` series (Total, Net) gets a solid chip.
+function SeriesToggles({ series, visible, onToggle }) {
   return (
     <div className="trends-toggles">
-      <button
-        className={`trend-toggle ${visible.total ? 'active' : ''}`}
-        style={visible.total ? { backgroundColor: '#E8E4DD', color: '#1A1A1F' } : {}}
-        onClick={() => onToggle('total')}
-      >
-        Total
-      </button>
-      {categories.map((c) => (
+      {series.map((s) => (
         <button
-          key={c.id}
-          className={`trend-toggle ${visible[c.id] ? 'active' : ''}`}
-          style={visible[c.id] ? { backgroundColor: c.color + '33', color: c.color, borderColor: c.color } : {}}
-          onClick={() => onToggle(c.id)}
+          key={s.key}
+          className={`trend-toggle ${visible[s.key] ? 'active' : ''}`}
+          style={visible[s.key]
+            ? (s.strong ? { backgroundColor: s.color, color: '#1A1A1F' } : { backgroundColor: s.color + '33', color: s.color, borderColor: s.color })
+            : {}}
+          onClick={() => onToggle(s.key)}
         >
-          {c.icon} {c.name}
+          {s.icon ? `${s.icon} ${s.name}` : s.name}
         </button>
       ))}
     </div>
   );
 }
 
-// Recharts needs <Line>s as direct children of the chart, so this returns elements rather than a component
-function seriesLines(categories, visible, dotProps, dotPropsSmall) {
-  return [
-    visible.total && (
-      <Line key="total" type="monotone" dataKey="total" name="total" stroke="#E8E4DD" strokeWidth={2.5} dot={dotProps} activeDot={{ r: 6 }} />
-    ),
-    ...categories.map((c) => visible[c.id] && (
-      <Line key={c.id} type="monotone" dataKey={c.id} name={c.id} stroke={c.color} strokeWidth={2} dot={dotPropsSmall} activeDot={{ r: 5 }} />
-    )),
-  ];
-}
+const TOTAL = { key: 'total', name: 'Total', color: '#E8E4DD', strong: true };
 
-const seriesName = (name) => (name === 'total' ? 'Total' : (CATEGORY_MAP[name]?.name || name));
+// Total, then one series per category that has data
+const categorySeries = (categories) => [
+  TOTAL,
+  ...categories.map((c) => ({ key: c.id, name: c.name, color: c.color, icon: c.icon })),
+];
+
+const NET_SERIES = [
+  { key: 'income', name: 'Income', color: '#7CE8A3' },
+  { key: 'spending', name: 'Spending', color: '#E8927C' },
+  { key: 'net', name: 'Net', color: '#E8E4DD', strong: true },
+];
+
+const toggledOn = (series, visible) => series.filter((s) => visible[s.key]);
+const flip = (setVisible) => (key) => setVisible((prev) => ({ ...prev, [key]: !prev[key] }));
+
+// Running totals read as lines; each period's own total as bars (24px at most, rounded at the data end)
+function TrendChart({ data, series, groupBy, cumulative, height, zeroLine = false }) {
+  const names = Object.fromEntries(series.map((s) => [s.key, s.name]));
+  const monthly = groupBy === 'monthly';
+  const Chart = cumulative ? LineChart : BarChart;
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <Chart data={data} margin={{ left: 10, right: 20, top: 10, bottom: 10 }} {...(cumulative ? {} : { barGap: 2, barCategoryGap: '20%' })}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
+        <XAxis {...XAXIS_PROPS(groupBy)} padding={cumulative ? { left: 24, right: 24 } : undefined} />
+        <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={90} />
+        {zeroLine && <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="4 4" />}
+        <Tooltip
+          formatter={(value, key) => [formatCurrency(value), names[key] || key]}
+          cursor={cumulative ? true : { fill: '#E8E4DD', fillOpacity: 0.06 }}
+          {...TOOLTIP_STYLE}
+          itemSorter={(item) => -item.value}
+        />
+        {series.map((s) => (cumulative ? (
+          <Line
+            key={s.key} type="monotone" dataKey={s.key} name={s.key} stroke={s.color} strokeWidth={s.strong ? 2.5 : 2}
+            dot={monthly ? { r: s.strong ? 4 : 3 } : false} activeDot={{ r: s.strong ? 6 : 5 }}
+          />
+        ) : (
+          <Bar key={s.key} dataKey={s.key} name={s.key} fill={s.color} maxBarSize={24} radius={[4, 4, 0, 0]} />
+        )))}
+      </Chart>
+    </ResponsiveContainer>
+  );
+}
 
 export default function Trends({ data }) {
   const [visible, setVisible] = useState({ total: true });
   const [incomeVisible, setIncomeVisible] = useState({ total: true });
+  const [netVisible, setNetVisible] = useState({ income: true, spending: true, net: true });
   const [groupBy, setGroupBy] = useState('monthly');
-
-  const toggle = (key) => {
-    setVisible((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-  const toggleIncome = (key) => {
-    setIncomeVisible((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+  const [cumulative, setCumulative] = useState(false);
 
   const spendingData = useMemo(
-    () => buildCategoryData(data.transactions, isSpending, groupBy),
-    [data.transactions, groupBy]
+    () => buildCategoryData(data.transactions, isSpending, { groupBy, cumulative }),
+    [data.transactions, groupBy, cumulative]
   );
 
   const incomeData = useMemo(
-    () => buildCategoryData(data.transactions, isIncome, groupBy),
-    [data.transactions, groupBy]
+    () => buildCategoryData(data.transactions, isIncome, { groupBy, cumulative }),
+    [data.transactions, groupBy, cumulative]
   );
 
   const netData = useMemo(
-    () => buildNetData(data.transactions, groupBy),
-    [data.transactions, groupBy]
+    () => buildNetData(data.transactions, { groupBy, cumulative }),
+    [data.transactions, groupBy, cumulative]
   );
 
   const activeCategories = useMemo(() => {
@@ -193,91 +133,59 @@ export default function Trends({ data }) {
     );
   }
 
-  const dotProps = groupBy === 'monthly' ? { r: 4 } : false;
-  const dotPropsSmall = groupBy === 'monthly' ? { r: 3 } : false;
+  const chartProps = { groupBy, cumulative };
 
   return (
     <div className="page trends">
       <div className="page-header">
         <h2>Trends</h2>
-        <div className="view-toggle">
-          <button
-            className={`view-btn ${groupBy === 'monthly' ? 'active' : ''}`}
-            onClick={() => setGroupBy('monthly')}
-          >
-            Monthly
-          </button>
-          <button
-            className={`view-btn ${groupBy === 'daily' ? 'active' : ''}`}
-            onClick={() => setGroupBy('daily')}
-          >
-            Daily
-          </button>
+        <div className="page-header-actions">
+          <div className="view-toggle">
+            <button
+              className={`view-btn ${groupBy === 'monthly' ? 'active' : ''}`}
+              onClick={() => setGroupBy('monthly')}
+            >
+              Monthly
+            </button>
+            <button
+              className={`view-btn ${groupBy === 'daily' ? 'active' : ''}`}
+              onClick={() => setGroupBy('daily')}
+            >
+              Daily
+            </button>
+          </div>
+          <div className="view-toggle">
+            <button className={`view-btn ${!cumulative ? 'active' : ''}`} onClick={() => setCumulative(false)}>
+              {groupBy === 'monthly' ? 'Per month' : 'Per day'}
+            </button>
+            <button className={`view-btn ${cumulative ? 'active' : ''}`} onClick={() => setCumulative(true)}>
+              Cumulative
+            </button>
+          </div>
         </div>
       </div>
 
       {spendingData.length > 0 && (
         <div className="card">
           <h3>Spending</h3>
-          <SeriesToggles categories={activeCategories} visible={visible} onToggle={toggle} />
-          <ResponsiveContainer width="100%" height={400}>
-            <LineChart data={spendingData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
-              <XAxis {...XAXIS_PROPS(groupBy)} />
-              <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={90} />
-              <Tooltip
-                formatter={(value, name) => [formatCurrency(value), seriesName(name)]}
-                {...TOOLTIP_STYLE}
-                itemSorter={(item) => -item.value}
-              />
-              {seriesLines(activeCategories, visible, dotProps, dotPropsSmall)}
-            </LineChart>
-          </ResponsiveContainer>
+          <SeriesToggles series={categorySeries(activeCategories)} visible={visible} onToggle={flip(setVisible)} />
+          <TrendChart data={spendingData} series={toggledOn(categorySeries(activeCategories), visible)} height={400} {...chartProps} />
         </div>
       )}
 
       {incomeData.length > 0 && (
         <div className="card">
           <h3>Income</h3>
-          <SeriesToggles categories={activeIncomeCategories} visible={incomeVisible} onToggle={toggleIncome} />
-          <ResponsiveContainer width="100%" height={350}>
-            <LineChart data={incomeData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
-              <XAxis {...XAXIS_PROPS(groupBy)} />
-              <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={90} />
-              <Tooltip
-                formatter={(value, name) => [formatCurrency(value), seriesName(name)]}
-                {...TOOLTIP_STYLE}
-                itemSorter={(item) => -item.value}
-              />
-              {seriesLines(activeIncomeCategories, incomeVisible, dotProps, dotPropsSmall)}
-            </LineChart>
-          </ResponsiveContainer>
+          <SeriesToggles series={categorySeries(activeIncomeCategories)} visible={incomeVisible} onToggle={flip(setIncomeVisible)} />
+          <TrendChart data={incomeData} series={toggledOn(categorySeries(activeIncomeCategories), incomeVisible)} height={350} {...chartProps} />
         </div>
       )}
 
       {netData.length > 0 && (
         <div className="card">
           <h3>Net</h3>
-          <ResponsiveContainer width="100%" height={350}>
-            <LineChart data={netData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
-              <XAxis {...XAXIS_PROPS(groupBy)} />
-              <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={90} />
-              <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="4 4" />
-              <Tooltip
-                formatter={(value, name) => {
-                  const labels = { income: 'Income', spending: 'Spending', net: 'Net' };
-                  return [formatCurrency(value), labels[name] || name];
-                }}
-                {...TOOLTIP_STYLE}
-                itemSorter={(item) => -item.value}
-              />
-              <Line type="monotone" dataKey="income" name="income" stroke="#7CE8A3" strokeWidth={2} dot={dotPropsSmall} activeDot={{ r: 5 }} />
-              <Line type="monotone" dataKey="spending" name="spending" stroke="#E8927C" strokeWidth={2} dot={dotPropsSmall} activeDot={{ r: 5 }} />
-              <Line type="monotone" dataKey="net" name="net" stroke="#E8E4DD" strokeWidth={2.5} dot={dotProps} activeDot={{ r: 6 }} />
-            </LineChart>
-          </ResponsiveContainer>
+          <SeriesToggles series={NET_SERIES} visible={netVisible} onToggle={flip(setNetVisible)} />
+          <TrendChart data={netData} series={toggledOn(NET_SERIES, netVisible)} height={350} zeroLine {...chartProps} />
         </div>
       )}
     </div>
