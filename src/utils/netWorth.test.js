@@ -110,6 +110,19 @@ describe('buildNetWorthHistory', () => {
     expect(at('2024-09-15').liabilities).toBe(1000);
   });
 
+  it('swaps the loans of a refinance on one day, never owing both', () => {
+    const accounts = [{ id: 'acct_1', type: 'asset' }];
+    const days = ['2024-11-01', '2024-11-04', '2024-11-06', '2024-11-08', '2024-11-12'].map((date) => ({ date, balance: 10000 }));
+    const old = { id: 'loan_old', closingDate: '2024-01-10', loanAmount: 300000, status: 'paid_off', payoffDate: '2024-11-08' };
+    const refi = { id: 'loan_new', closingDate: '2024-11-04', startDate: '2024-12-01', loanAmount: 290000, status: 'active', refinancesLoanId: 'loan_old' };
+    const debt = (loans) => Object.fromEntries(buildNetWorthHistory(accounts, { acct_1: days }, { properties: [], loans, payments: [] })
+      .filter((r) => r.date >= '2024-11-01').map((r) => [r.date, r.liabilities]));
+    // Signed on the 4th, funded and the old loan paid off on the 8th
+    expect(debt([old, refi])).toEqual({ '2024-11-01': 300000, '2024-11-04': 300000, '2024-11-06': 300000, '2024-11-08': 290000, '2024-11-12': 290000 });
+    // Without a payoff date the old loan ends when the new one closes
+    expect(debt([{ ...old, payoffDate: null }, refi])).toEqual({ '2024-11-01': 300000, '2024-11-04': 290000, '2024-11-06': 290000, '2024-11-08': 290000, '2024-11-12': 290000 });
+  });
+
   it('counts a property without a purchase date from the start', () => {
     const rows = buildNetWorthHistory([checking], timelines, { properties: [{ estimatedValue: 300000 }], loans: [], payments: [] });
     expect(rows[0]).toEqual({ date: '2024-06-03', assets: 320000, liabilities: 0, netWorth: 320000 });

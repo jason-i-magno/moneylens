@@ -63,12 +63,28 @@ const byDate = (a, b) => a.date.localeCompare(b.date);
 export function buildNetWorthHistory(accounts, timelines, mortgages) {
   const series = accounts.map((acct) => ({ type: acct.type, points: timelines[acct.id] || [] }));
 
+  // A refinance swaps the loans on one day: the new loan's money pays off the old one at funding, a few
+  // days after closing, so the new loan starts at the old one's payoff (or the old one ends when the new
+  // one starts) and the two are never owed at once
+  const loansById = Object.fromEntries(mortgages.loans.map((l) => [l.id, l]));
+  const refinancedBy = Object.fromEntries(mortgages.loans.filter((l) => l.refinancesLoanId).map((l) => [l.refinancesLoanId, l]));
+  const startOf = (loan) => {
+    const start = loan.closingDate || loan.startDate;
+    const payoff = loansById[loan.refinancesLoanId]?.payoffDate;
+    return payoff && payoff > start ? payoff : start;
+  };
+  const endOf = (loan) => {
+    if (loan.status === 'paid_off' && loan.payoffDate) return loan.payoffDate;
+    return refinancedBy[loan.id] ? startOf(refinancedBy[loan.id]) : null;
+  };
+
   for (const loan of mortgages.loans) {
-    const points = [{ date: loan.closingDate || loan.startDate, balance: loan.loanAmount }];
+    const points = [{ date: startOf(loan), balance: loan.loanAmount }];
     for (const p of mortgages.payments) {
       if (p.loanId === loan.id) points.push({ date: p.date || `${p.forMonth}-01`, balance: p.balanceAfter });
     }
-    if (loan.status === 'paid_off' && loan.payoffDate) points.push({ date: loan.payoffDate, balance: 0 });
+    const end = endOf(loan);
+    if (end) points.push({ date: end, balance: 0 });
     series.push({ type: 'liability', points: points.filter((p) => p.date).sort(byDate) });
   }
 
