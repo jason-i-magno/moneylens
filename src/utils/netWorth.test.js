@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBalanceTimeline, balanceEffect } from './netWorth';
+import { buildBalanceTimeline, buildNetWorthHistory, balanceEffect } from './netWorth';
 
 const tx = (date, amount, type, importedFrom = 'bank') => ({ date, amount, type, importedFrom });
 
@@ -70,5 +70,48 @@ describe('buildBalanceTimeline', () => {
     expect(buildBalanceTimeline(savings, snapshots, [tx('2026-02-01', 1, 'debit')])).toEqual([
       { date: '2026-01-31', balance: 5000 },
     ]);
+  });
+});
+
+describe('buildNetWorthHistory', () => {
+  const checking = { id: 'acct_1', type: 'asset' };
+  const card = { id: 'acct_2', type: 'liability' };
+  const timelines = {
+    acct_1: [
+      { date: '2024-06-03', balance: 20000 },
+      { date: '2024-06-13', balance: 125000 }, // closing money gathered
+      { date: '2024-06-14', balance: 5000 }, // cash to close wired out
+      { date: '2024-08-03', balance: 6000 },
+    ],
+    acct_2: [{ date: '2024-06-10', balance: 1000 }],
+  };
+  const mortgages = {
+    properties: [{ id: 'prop_1', purchaseDate: '2024-06-14', purchasePrice: 520000, estimatedValue: 500000 }],
+    loans: [{ id: 'loan_1', closingDate: '2024-06-14', startDate: '2024-07-01', loanAmount: 400000, status: 'paid_off', payoffDate: '2024-09-15' }],
+    payments: [
+      { loanId: 'loan_1', date: '2024-08-02', forMonth: '2024-08', balanceAfter: 399000 },
+      { loanId: 'loan_1', forMonth: '2024-09', balanceAfter: 398000 }, // no payment date: the 1st of the month
+    ],
+  };
+  const history = buildNetWorthHistory([checking, card], timelines, mortgages);
+  const at = (date) => history.find((r) => r.date === date);
+
+  it('adds the house and its mortgage on the closing day, not the start of the month', () => {
+    expect(at('2024-06-10')).toEqual({ date: '2024-06-10', assets: 20000, liabilities: 1000, netWorth: 19000 });
+    expect(at('2024-06-13').netWorth).toBe(124000);
+    expect(at('2024-06-14')).toEqual({ date: '2024-06-14', assets: 505000, liabilities: 401000, netWorth: 104000 });
+    expect(history.map((r) => r.date)).not.toContain('2024-06');
+  });
+
+  it('follows mortgage payments on their dates and a payoff', () => {
+    expect(at('2024-08-02').liabilities).toBe(400000);
+    expect(at('2024-08-02').netWorth).toBe(500000 + 5000 - 1000 - 399000);
+    expect(at('2024-09-01').netWorth).toBe(500000 + 6000 - 1000 - 398000);
+    expect(at('2024-09-15').liabilities).toBe(1000);
+  });
+
+  it('counts a property without a purchase date from the start', () => {
+    const rows = buildNetWorthHistory([checking], timelines, { properties: [{ estimatedValue: 300000 }], loans: [], payments: [] });
+    expect(rows[0]).toEqual({ date: '2024-06-03', assets: 320000, liabilities: 0, netWorth: 320000 });
   });
 });

@@ -6,7 +6,7 @@ import Modal from '../components/Modal';
 import FileDropZone from '../components/FileDropZone';
 import EmptyState from '../components/EmptyState';
 import ConfirmButton from '../components/ConfirmButton';
-import { buildBalanceTimeline } from '../utils/netWorth';
+import { buildBalanceTimeline, buildNetWorthHistory } from '../utils/netWorth';
 import { plaidSourceOptions } from '../utils/plaidSync';
 import { todayISO } from '../utils/dates';
 
@@ -109,85 +109,11 @@ export default function NetWorth({ data, finance }) {
   );
   const netWorthValue = totalAssets - totalLiabilities;
 
-  // Chart data: carry forward latest known balance per account across all dates
-  const chartData = useMemo(() => {
-    // Collect all data points: { accountKey, type, date, balance }
-    const points = [];
-
-    // Account balances: snapshots plus transaction-derived points for linked accounts
-    for (const acct of nw.accounts) {
-      for (const p of timelines[acct.id]) {
-        points.push({ key: acct.id, type: acct.type, date: p.date, balance: p.balance });
-      }
-    }
-
-    // Auto-derived: mortgage debt over time (from each payment)
-    for (const loan of mortgages.loans) {
-      const loanPayments = mortgages.payments.filter((p) => p.loanId === loan.id);
-      // Starting balance — use closingDate so it aligns with property purchase
-      const loanStartDate = (loan.closingDate || loan.startDate).slice(0, 7);
-      points.push({ key: `auto_loan_${loan.id}`, type: 'liability', date: loanStartDate, balance: loan.loanAmount });
-      for (const p of loanPayments) {
-        points.push({ key: `auto_loan_${loan.id}`, type: 'liability', date: p.forMonth, balance: p.balanceAfter });
-      }
-      // If paid off, balance goes to 0
-      if (loan.status === 'paid_off' && loan.payoffDate) {
-        points.push({ key: `auto_loan_${loan.id}`, type: 'liability', date: loan.payoffDate.slice(0, 7), balance: 0 });
-      }
-    }
-
-    // Auto-derived: property value (constant across all dates unless estimatedValueDate changes it)
-    for (const prop of mortgages.properties) {
-      const value = prop.estimatedValue || prop.purchasePrice;
-      points.push({ key: `auto_prop_${prop.id}`, type: 'asset', date: prop.purchaseDate?.slice(0, 7) || prop.purchaseDate, balance: value });
-    }
-
-    if (points.length === 0) return [];
-
-    // Get all unique dates, sorted
-    const allDates = [...new Set(points.map((p) => p.date))].sort();
-    // Get all unique account keys
-    const allKeys = [...new Set(points.map((p) => p.key))];
-
-    // Build latest-known-balance map per key, keyed by date
-    const latestByKey = {};
-    for (const key of allKeys) {
-      const keyPoints = points.filter((p) => p.key === key).sort((a, b) => a.date.localeCompare(b.date));
-      latestByKey[key] = { type: keyPoints[0].type, timeline: keyPoints };
-    }
-
-    // For each date, compute total assets and liabilities by carrying forward
-    const result = [];
-    const currentBalances = {}; // key -> latest balance
-
-    for (const date of allDates) {
-      // Update balances for any keys that have a data point on this date
-      for (const key of allKeys) {
-        const entry = latestByKey[key];
-        const match = entry.timeline.filter((p) => p.date <= date);
-        if (match.length > 0) {
-          currentBalances[key] = { type: entry.type, balance: match[match.length - 1].balance };
-        }
-      }
-
-      // Sum up
-      let assets = 0;
-      let liabilities = 0;
-      for (const val of Object.values(currentBalances)) {
-        if (val.type === 'asset') assets += val.balance;
-        else liabilities += val.balance;
-      }
-
-      result.push({
-        date,
-        assets: Math.round(assets * 100) / 100,
-        liabilities: Math.round(liabilities * 100) / 100,
-        netWorth: Math.round((assets - liabilities) * 100) / 100,
-      });
-    }
-
-    return result;
-  }, [nw.accounts, timelines, mortgages]);
+  // Chart data: each account's latest known balance on every date any of them changes
+  const chartData = useMemo(
+    () => buildNetWorthHistory(nw.accounts, timelines, mortgages),
+    [nw.accounts, timelines, mortgages]
+  );
 
   // Grouped accounts
   const grouped = useMemo(() => {
