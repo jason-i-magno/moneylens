@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import Modal from '../components/Modal';
 import TransactionRow from '../components/TransactionRow';
 import TransactionForm from '../components/TransactionForm';
+import MonthSelect from '../components/MonthSelect';
 import EmptyState from '../components/EmptyState';
 import { formatCurrency } from '../constants/categories';
 import { getMonthOptions } from '../utils/dates';
@@ -46,9 +47,7 @@ export default function Income({ data, updateTransaction, deleteTransaction }) {
           </p>
         </div>
         <div className="page-header-actions">
-          <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}>
-            {monthOptions.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
+          <MonthSelect months={monthOptions} value={selectedMonth} onChange={setSelectedMonth} />
         </div>
       </div>
 

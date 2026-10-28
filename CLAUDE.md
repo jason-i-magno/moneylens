@@ -346,6 +346,7 @@ moneylens/
     │   ├── ConfirmButton.jsx      # Two-click destructive action
     │   ├── TransactionRow.jsx     # Edit/Del shown only when handlers passed
     │   ├── TransactionForm.jsx    # Shared add/edit form (Spending, Income)
+    │   ├── MonthSelect.jsx        # Month picker in the Spending and Income headers
     │   ├── SubscriptionCard.jsx
     │   ├── CategoryChart.jsx
     │   ├── MiniBar.jsx

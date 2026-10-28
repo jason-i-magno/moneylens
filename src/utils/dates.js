@@ -25,6 +25,12 @@ export function daysBetween(from, to) {
   return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / 86400000);
 }
 
+// 'YYYY-MM' → 'October 2026'
+export function formatMonth(monthStr) {
+  const [y, m] = monthStr.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
 export function addMonths(monthStr, months) {
   const [y, m] = monthStr.split('-').map(Number);
   const date = new Date(y, m - 1 + months, 1);
