@@ -6,7 +6,8 @@ import Modal from '../components/Modal';
 import FileDropZone from '../components/FileDropZone';
 import EmptyState from '../components/EmptyState';
 import ConfirmButton from '../components/ConfirmButton';
-import { buildBalanceTimeline, buildNetWorthHistory } from '../utils/netWorth';
+import { buildBalanceTimeline, buildNetWorthHistory, loanBalancePoints } from '../utils/netWorth';
+import { parseKeywordList } from '../utils/categorizer';
 import { plaidSourceOptions } from '../utils/plaidSync';
 import { todayISO } from '../utils/dates';
 
@@ -52,36 +53,36 @@ export default function NetWorth({ data, finance }) {
       });
     }
 
-    // Mortgage debts
+    // Mortgage debts: the latest statement, or an estimate from the payments made since
     for (const loan of mortgages.loans) {
       if (loan.status !== 'active') continue;
-      const loanPayments = mortgages.payments.filter((p) => p.loanId === loan.id);
-      let balance = loan.loanAmount;
-      let date = loan.startDate;
-      if (loanPayments.length > 0) {
-        const sorted = [...loanPayments].sort((a, b) => b.forMonth.localeCompare(a.forMonth));
-        balance = sorted[0].balanceAfter;
-        date = sorted[0].forMonth;
-      }
+      const latest = loanBalancePoints(loan, mortgages.payments, data.transactions || []).at(-1);
       items.push({
         id: `auto_loan_${loan.id}`,
         name: loan.label,
         type: 'liability',
         category: 'debt',
-        balance,
-        date,
+        balance: latest?.balance ?? loan.loanAmount,
+        date: latest?.date ?? null,
+        estimated: !!latest?.estimated,
         auto: true,
       });
     }
 
     return items;
-  }, [mortgages]);
+  }, [mortgages, data.transactions]);
 
   // Snapshots plus, for linked accounts, transaction-derived daily balances
   const timelines = useMemo(() => {
     const transactions = data.transactions || [];
     return Object.fromEntries(nw.accounts.map((acct) => [acct.id, buildBalanceTimeline(acct, nw.snapshots, transactions)]));
   }, [nw.accounts, nw.snapshots, data.transactions]);
+
+  // Accounts that single transfers are linked to (Other Account in the transaction edit form)
+  const linkedTransferAccounts = useMemo(
+    () => new Set((data.transactions || []).filter((t) => t.transferAccountId && t.category === 'transfers').map((t) => t.transferAccountId)),
+    [data.transactions]
+  );
 
   // All accounts with their most recent known balance
   const accountsWithBalances = useMemo(() => {
@@ -111,8 +112,8 @@ export default function NetWorth({ data, finance }) {
 
   // Chart data: each account's latest known balance on every date any of them changes
   const chartData = useMemo(
-    () => buildNetWorthHistory(nw.accounts, timelines, mortgages),
-    [nw.accounts, timelines, mortgages]
+    () => buildNetWorthHistory(nw.accounts, timelines, mortgages, data.transactions || []),
+    [nw.accounts, timelines, mortgages, data.transactions]
   );
 
   // Grouped accounts
@@ -320,7 +321,11 @@ export default function NetWorth({ data, finance }) {
                       <span className="nw-account-meta">
                         {acct.date ? `Updated ${acct.date}` : 'No data'}
                         {acct.auto && <span className="tx-badge">AUTO</span>}
+                        {acct.estimated && <span className="tx-badge sub" title="Estimated from the payments made since the latest statement">EST</span>}
                         {acct.linkedBankProfile && <span className="tx-badge sub">LIVE</span>}
+                        {(acct.transferKeywords?.length > 0 || linkedTransferAccounts.has(acct.id)) && (
+                          <span className="tx-badge sub" title={acct.transferKeywords?.length ? `Follows transfers matching: ${acct.transferKeywords.join(', ')}` : 'Follows the transfers linked to it'}>FOLLOWS</span>
+                        )}
                       </span>
                     </div>
                     <div className="nw-account-balance-wrap">
@@ -380,7 +385,10 @@ function SnapshotList({ snapshots, onDelete }) {
 
 function AccountForm({ account, bankProfiles, onSave }) {
   const [form, setForm] = useState(account || { name: '', type: 'asset', category: 'bank', linkedBankProfile: '' });
+  const [keywords, setKeywords] = useState((account?.transferKeywords || []).join(', '));
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const handleSave = () => onSave({ ...form, transferKeywords: parseKeywordList(keywords) });
 
   const handleCategoryChange = (e) => {
     const cat = CATEGORY_MAP[e.target.value];
@@ -410,7 +418,16 @@ function AccountForm({ account, bankProfiles, onSave }) {
           {bankProfiles.map(([id, p]) => <option key={id} value={id}>{p.name}</option>)}
         </select>
       </div>
-      <button className="btn-primary" onClick={() => onSave(form)}>Save</button>
+      <div className="form-group">
+        <label>Follow transfers matching (keywords, comma-separated)</label>
+        <input value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="e.g. 1234, my brokerage" />
+        <p className="muted settings-help">
+          For an account that isn&apos;t imported or synced: moves to or from it in your other accounts update its balance,
+          so they don&apos;t look like money appearing or disappearing. Single transfers can also be linked to it when you edit them
+          on the Spending or Income page. Add one balance you know afterwards (0 for a closed account).
+        </p>
+      </div>
+      <button className="btn-primary" onClick={handleSave}>Save</button>
     </>
   );
 }

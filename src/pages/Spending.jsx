@@ -136,7 +136,7 @@ export default function Spending({ data, addTransaction, updateTransaction, dele
       )}
 
       <Modal isOpen={modalOpen} onClose={() => setModalOpen(false)} title={editing ? 'Edit Transaction' : 'Add Transaction'}>
-        <TransactionForm key={editing?.id || 'new'} transaction={editing} onSave={handleSave} />
+        <TransactionForm key={editing?.id || 'new'} transaction={editing} onSave={handleSave} accounts={data.netWorth.accounts.filter((a) => !a.linkedBankProfile)} />
       </Modal>
     </div>
   );

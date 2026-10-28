@@ -7,6 +7,7 @@ import FileDropZone from '../components/FileDropZone';
 import EmptyState from '../components/EmptyState';
 import ConfirmButton from '../components/ConfirmButton';
 import { addMonths, todayISO } from '../utils/dates';
+import { parseKeywordList } from '../utils/categorizer';
 
 // ─── Loan Summary Card ───
 function LoanSummary({ loan, onEdit }) {
@@ -185,10 +186,12 @@ const EMPTY_LOAN = {
 
 function LoanForm({ loan, onSave, onDelete, properties }) {
   const [form, setForm] = useState(loan || EMPTY_LOAN);
+  const [keywords, setKeywords] = useState((loan?.paymentKeywords || []).join(', '));
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const handleSave = () => {
     onSave({
       ...form,
+      paymentKeywords: parseKeywordList(keywords),
       loanAmount: parseFloat(form.loanAmount) || 0,
       interestRate: parseFloat(form.interestRate) || 0,
       termYears: parseInt(form.termYears) || 0,
@@ -222,6 +225,14 @@ function LoanForm({ loan, onSave, onDelete, properties }) {
           <option value="lakeview">Lakeview / LoanCare</option>
           <option value="rocket">Rocket Mortgage</option>
         </select>
+      </div>
+      <div className="form-group">
+        <label>Follow payments matching (keywords, comma-separated)</label>
+        <input value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="e.g. my servicer" />
+        <p className="muted settings-help">
+          Net Worth lowers the balance with each matching payment from your accounts after the latest statement, estimating
+          the interest at the loan&apos;s rate, until a newer statement replaces the estimate.
+        </p>
       </div>
       <div className="form-group"><label>Loan Number</label><input value={form.loanNumber} onChange={set('loanNumber')} /></div>
       <div className="form-group"><label>Loan Amount</label><input type="number" value={form.loanAmount} onChange={set('loanAmount')} /></div>
@@ -308,6 +319,7 @@ function PropertyForm({ property, onSave, onDelete }) {
       <div className="form-group"><label>Purchase Price</label><input type="number" value={form.purchasePrice} onChange={set('purchasePrice')} /></div>
       <div className="form-group"><label>Purchase Date</label><input type="date" value={form.purchaseDate} onChange={set('purchaseDate')} /></div>
       <div className="form-group"><label>Estimated Value</label><input type="number" value={form.estimatedValue} onChange={set('estimatedValue')} /></div>
+      <div className="form-group"><label>Estimate Date (net worth uses the purchase price until then)</label><input type="date" value={form.estimatedValueDate || ''} onChange={set('estimatedValueDate')} /></div>
       <div className="modal-actions">
         <button className="btn-primary" onClick={handleSave}>Save Property</button>
         {onDelete && <ConfirmButton label="Delete Property" confirmLabel="Click again to delete property" onConfirm={onDelete} />}

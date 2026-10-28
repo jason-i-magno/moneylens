@@ -8,8 +8,14 @@ const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Keyword must start at a word boundary: 'rent' matches "RENT PMT" but not "PARENT" or "CURRENT".
 // A space matches any run of whitespace, since banks pad descriptions ("IRS  TREAS 310").
-function keywordRegex(keyword) {
+export function keywordRegex(keyword) {
   return new RegExp(`(?:^|[^a-z0-9])${escapeRegex(keyword.toLowerCase()).replace(/ +/g, '\\s+')}`, 'i');
+}
+
+// A comma-separated keyword field: "a, b, ,c" → ['a', 'b', 'c'], or undefined when empty so the field is left out
+export function parseKeywordList(text) {
+  const list = text.split(',').map((k) => k.trim()).filter(Boolean);
+  return list.length ? list : undefined;
 }
 
 // Effective keywords = code defaults − user removals + user additions.

@@ -61,7 +61,7 @@ export default function Income({ data, updateTransaction, deleteTransaction }) {
       )}
 
       <Modal isOpen={!!editing} onClose={() => setEditing(null)} title="Edit Transaction">
-        {editing && <TransactionForm key={editing.id} transaction={editing} onSave={handleSave} />}
+        {editing && <TransactionForm key={editing.id} transaction={editing} onSave={handleSave} accounts={data.netWorth.accounts.filter((a) => !a.linkedBankProfile)} />}
       </Modal>
     </div>
   );

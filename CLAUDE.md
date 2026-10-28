@@ -196,9 +196,12 @@ The five colored ones are in fixed order and were checked for telling apart on t
 
 - Account categories (page-local): `bank`, `investment`, `property` (assets), `debt` (liability).
 - **Snapshots** are end-of-day balances (`{ accountId, date, balance, source }`). A statement's *beginning* balance is stored on the day **before** the period starts.
-- **Live balances** (`buildBalanceTimeline` in `src/utils/netWorth.js`): for an account with `linkedBankProfile`, transactions whose `importedFrom` equals that profile fill in daily balances — forward from every snapshot up to the next one, and backward from the earliest. Effect depends on account type: credits raise assets / lower liabilities; debits lower assets / raise liabilities. No snapshot → no balance.
+- **Live balances** (`buildBalanceTimeline` in `src/utils/netWorth.js`): for an account with `linkedBankProfile`, transactions whose `importedFrom` equals that profile fill in daily balances — forward from every snapshot up to the next one, and backward from the earliest, ending with the opening balance on the day before the earliest activity (so an account's first move nets out against its other side). Effect depends on account type: credits raise assets / lower liabilities; debits lower assets / raise liabilities. No snapshot → no balance.
+- **Followed transfers** (`followedTransfers`): an account that isn't imported or synced (a savings account, a brokerage, a car loan) can list `transferKeywords`. Transactions in any other account whose description matches one (matched like category keywords) count the other way round in its timeline: money that left another account for it raises an asset or pays down a liability. Single transfers can also be linked to it (`transferAccountId`, the Other Account select in the transaction edit form, shown for transfers when there are accounts that aren't imported or synced), for moves no keyword can single out; a link counts only while the transaction is a transfer. Moves between the user's own accounts then cancel out in net worth instead of looking like money appearing or disappearing. It still needs one snapshot as an anchor (0 for a closed account), and it only counts from the day before its earliest known activity; for a loan that existed earlier, add an older balance. Growth inside the account (interest, market changes) shows only through snapshots.
 - Mortgage properties (asset) and active loans (liability) are derived automatically from mortgage data and shown with an AUTO badge (not editable here).
-- **History chart** (`buildNetWorthHistory` in `src/utils/netWorth.js`): on every date any balance changes, each account's latest known balance. Mortgage loans and properties are placed on their real dates (closing date, each payment's `date`, payoff date, purchase date), never a whole month, so a house purchase lands on the same day as the cash that paid for it. A refinance (`refinancesLoanId`) swaps the loans on one day: the new loan starts at the old one's payoff date (funding happens a few days after closing), or the old one ends when the new one starts, so both are never owed at once.
+- **Loans follow their payments** (`loanBalancePoints`): a loan's balance is the loan amount at the start, then each recorded payment's `balanceAfter`. After the latest recorded payment, payments from the user's accounts matching the loan's `paymentKeywords` lower it (an EST badge marks the estimate): one of at least the scheduled amount (`monthlyPI` plus the latest escrow) pays a month's interest at `interestRate` and the escrow, and the rest is principal; a smaller one is all principal. A payment equal to the latest statement's total within 10 days of it is that statement's own payment reaching the bank, so it isn't counted twice. Importing a newer statement replaces the estimate. Only Net Worth uses the estimate; the Mortgage page shows statements.
+- **Transfers in transit** (`transfersInTransit`): a card often shows a payment a few days before the bank account it came from does. For a transfer debit and a same-amount transfer credit in two different linked accounts, at most 5 days apart (closest first, each transaction once, moves a followed account covers left out), the history holds back the earlier side until the later one posts, so the money isn't counted in both places. Account balances themselves are unchanged.
+- **History chart** (`buildNetWorthHistory` in `src/utils/netWorth.js`): on every date any balance changes, each account's latest known balance. Mortgage loans and properties are placed on their real dates (closing date, each payment's `date`, payoff date, purchase date), never a whole month, and a property counts at its purchase price until its `estimatedValueDate` (at its estimate from the purchase when the estimate has no date), so a house purchase lands on the same day as the cash that paid for it. A refinance (`refinancesLoanId`) swaps the loans on one day: the new loan starts at the old one's payoff date (funding happens a few days after closing), or the old one ends when the new one starts, so both are never owed at once. Loans include their estimate from followed payments, and transfers in transit count on the day their later side posts.
 
 ## Mortgage
 
@@ -263,12 +266,12 @@ Single localStorage key `moneylens-data`:
   "categoryKeywords": { "groceries": ["corner market"] },
   "removedKeywords": { "transport": ["toll"] },
   "mortgages": {
-    "properties": [{ "id": "prop_…", "address": "", "purchasePrice": 0, "purchaseDate": "YYYY-MM-DD", "estimatedValue": 0 }],
-    "loans": [{ "id": "loan_…", "label": "", "lender": "", "servicer": "", "servicerType": "rocket", "loanNumber": "", "loanAmount": 0, "interestRate": 6.5, "termYears": 30, "monthlyPI": 0, "startDate": "YYYY-MM-DD", "maturityDate": "", "closingDate": "", "loanType": "", "closingCosts": 0, "cashToClose": 0, "lenderCredits": 0, "status": "active | paid_off", "payoffDate": null, "payoffBalance": null, "propertyId": "", "refinancesLoanId": "optional" }],
+    "properties": [{ "id": "prop_…", "address": "", "purchasePrice": 0, "purchaseDate": "YYYY-MM-DD", "estimatedValue": 0, "estimatedValueDate": "YYYY-MM-DD | optional" }],
+    "loans": [{ "id": "loan_…", "label": "", "lender": "", "servicer": "", "servicerType": "rocket", "loanNumber": "", "loanAmount": 0, "interestRate": 6.5, "termYears": 30, "monthlyPI": 0, "startDate": "YYYY-MM-DD", "maturityDate": "", "closingDate": "", "loanType": "", "closingCosts": 0, "cashToClose": 0, "lenderCredits": 0, "status": "active | paid_off", "payoffDate": null, "payoffBalance": null, "propertyId": "", "refinancesLoanId": "optional", "paymentKeywords": ["optional"] }],
     "payments": [{ "id": "mpay_…", "loanId": "loan_…", "date": "YYYY-MM-DD", "forMonth": "YYYY-MM", "principal": 0, "interest": 0, "escrow": 0, "extraPrincipal": 0, "balanceAfter": 0, "source": "manual | pdf_import", "statementDate": "YYYY-MM-DD" }]
   },
   "netWorth": {
-    "accounts": [{ "id": "acct_…", "name": "US Bank Checking", "type": "asset | liability", "category": "bank | investment | property | debt", "linkedBankProfile": "usbank_checking" }],
+    "accounts": [{ "id": "acct_…", "name": "US Bank Checking", "type": "asset | liability", "category": "bank | investment | property | debt", "linkedBankProfile": "usbank_checking", "transferKeywords": ["optional"] }],
     "snapshots": [{ "id": "snap_…", "accountId": "acct_…", "date": "YYYY-MM-DD", "balance": 0, "source": "manual | pdf_import | plaid" }]
   },
   "plaid": {
@@ -283,7 +286,7 @@ Single localStorage key `moneylens-data`:
 
 - `type` exists only on imported and synced transactions; `isSubscription` is set on import (and by re-categorize).
 - `importedFrom` is the profile ID of the file the row came from, `"manual"` for an unsaved manual mapping, or a Bank Sync account's `target`.
-- `merchantName` and `plaidCategory` are present only when Plaid supplied them; `pairedTransfer: true` only on matched Bank Sync transfers; `categorySetByUser: true` only on categories the user chose (see Auto-Categorization). Optional fields whose absence is the right default for old data need no migration.
+- `merchantName` and `plaidCategory` are present only when Plaid supplied them; `pairedTransfer: true` only on matched Bank Sync transfers; `transferAccountId` only on transfers linked to a Net Worth account; `categorySetByUser: true` only on categories the user chose (see Auto-Categorization). Optional fields whose absence is the right default for old data need no migration.
 
 ### Schema versions and migration
 
@@ -325,7 +328,7 @@ moneylens/
     │   ├── categorizer.js         # Keyword matching, effective keywords, overrides diff
     │   ├── csvParser.js           # PapaParse wrapper, date detection, amount normalization
     │   ├── duplicateDetector.js   # date + amount + description matching
-    │   ├── netWorth.js            # Balance timeline from snapshots + linked transactions
+    │   ├── netWorth.js            # Balance timelines (linked transactions, followed transfers), loan estimates, transfers in transit, net worth history
     │   ├── plaidSync.js           # Bank Sync: default targets, applySyncResult, removePlaidItem
     │   ├── plaidClient.js         # Browser calls to /api/plaid and the Plaid Link loader
     │   ├── mortgageCalculations.js
