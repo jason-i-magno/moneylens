@@ -215,7 +215,9 @@ describe('a mortgage loan that follows its payments', () => {
   });
 
   it("doesn't count the statement's own payment twice when the bank posts it a few days later", () => {
-    expect(points([pay('2024-05-04', 1000), pay('2024-05-20', 500)]).slice(2)).toEqual([['2024-05-20', 119500, true]]);
+    // Up to 5 days later the payment counts on the bank's date; up to 10 it's still the statement's own
+    expect(points([pay('2024-05-04', 1000), pay('2024-05-20', 500)]).slice(1)).toEqual([['2024-05-04', 120000, false], ['2024-05-20', 119500, true]]);
+    expect(points([pay('2024-05-08', 1000), pay('2024-05-20', 500)]).slice(1)).toEqual([['2024-05-01', 120000, false], ['2024-05-20', 119500, true]]);
     // Long after the statement, the same amount is a new payment
     expect(points([pay('2024-06-01', 1000)]).slice(2)).toEqual([['2024-06-01', 119120, true]]);
   });
@@ -226,6 +228,61 @@ describe('a mortgage loan that follows its payments', () => {
 
   it('follows nothing without keywords', () => {
     expect(points([pay('2024-06-01', 1000)], [statement], { ...loan, paymentKeywords: undefined })).toHaveLength(2);
+  });
+
+  it("steps down on each of a statement's listed payments", () => {
+    const listed = { ...statement, statementDate: '2024-05-05', activity: [{ date: '2024-04-28', principal: 900 }, { date: '2024-04-10', principal: 300 }] };
+    expect(points([], [listed])).toEqual([
+      ['2024-01-10', 130000, false],
+      ['2024-04-10', 120900, false], // the extra principal, on its own date
+      ['2024-04-28', 120000, false],
+    ]);
+  });
+
+  it('without listed payments, counts the regular payment and the extra principal on the days the bank paid them', () => {
+    const unlisted = { ...statement, extraPrincipal: 500, escrow: 200 }; // regular payment: 900 + 100 + 200
+    expect(points([pay('2024-04-28', 500), pay('2024-05-04', 1200)], [unlisted])).toEqual([
+      ['2024-01-10', 130000, false],
+      ['2024-04-28', 120900, false],
+      ['2024-05-04', 120000, false],
+    ]);
+    // An extra no bank payment matches stays on the payment's date
+    expect(points([pay('2024-04-20', 500), pay('2024-05-04', 1200)], [unlisted]).slice(1)).toEqual([['2024-05-01', 120900, false], ['2024-05-04', 120000, false]]);
+  });
+
+  it("counts a listed payment on the day the bank posted it, and doesn't estimate that bank payment again", () => {
+    const listed = { ...statement, statementDate: '2024-05-05', activity: [{ date: '2024-04-10', principal: 300, amount: 300 }, { date: '2024-05-01', principal: 900, amount: 1000 }] };
+    expect(points([pay('2024-04-13', 300), pay('2024-05-06', 1000), pay('2024-05-20', 500)], [listed])).toEqual([
+      ['2024-01-10', 130000, false],
+      ['2024-04-13', 120900, false],
+      ['2024-05-06', 120000, false], // posted after the statement date: the statement's own payment
+      ['2024-05-20', 119500, true],
+    ]);
+  });
+
+  it('with a statement date, counts only payments after it (the earlier ones are in its balance)', () => {
+    const dated = { ...statement, statementDate: '2024-05-06' };
+    expect(points([pay('2024-05-03', 500), pay('2024-05-06', 1000), pay('2024-05-07', 1000)], [dated]).slice(2))
+      .toEqual([['2024-05-07', 119120, true]]); // a payment equal to the statement's total is a new one after its date
+  });
+
+  it('puts a drop that neither statement lists on the followed payment between them', () => {
+    // e.g. the last payment to the old servicer after its final statement
+    const earlier = { ...statement, date: '2024-03-01', forMonth: '2024-03', balanceAfter: 121000, statementDate: '2024-03-05' };
+    const later = { ...statement, statementDate: '2024-05-05', balanceAfter: 119000, activity: [{ date: '2024-04-20', principal: 100 }, { date: '2024-05-01', principal: 900 }] };
+    expect(points([pay('2024-03-04', 500), pay('2024-03-28', 3000), pay('2024-04-10', 300)], [earlier, later])).toEqual([
+      ['2024-01-10', 130000, false],
+      ['2024-03-01', 121000, false],
+      ['2024-03-28', 120000, false], // the 1,000 the later statement starts lower (not more)
+      ['2024-04-20', 119900, false],
+      ['2024-05-01', 119000, false],
+    ]);
+  });
+
+  it("counts principal applied before the loan's start from the start", () => {
+    const early = { ...statement, date: '2024-02-01', forMonth: '2024-02', balanceAfter: 128100, activity: [{ date: '2024-01-05', principal: 1000 }, { date: '2024-02-01', principal: 900 }] };
+    const debt = Object.fromEntries(buildNetWorthHistory([], {}, { properties: [], loans: [loan], payments: [early] }).map((r) => [r.date, r.liabilities]));
+    expect(debt).toEqual({ '2024-01-10': 129000, '2024-02-01': 128100 });
   });
 
   it('feeds the net worth history and stops at a payoff', () => {

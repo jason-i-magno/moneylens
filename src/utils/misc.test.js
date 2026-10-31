@@ -4,6 +4,7 @@ import { addDays, addMonths, daysBetween, todayISO, getMonthOptions } from './da
 import { detectDateFormat, parseDate } from './csvParser';
 import { findDuplicates } from './duplicateDetector';
 import { makeId } from './ids';
+import { loanServicers, servicerOn } from './mortgageCalculations';
 
 describe('income and spending rules', () => {
   const paycheck = { type: 'credit', category: 'other', amount: 3000 };
@@ -94,5 +95,22 @@ describe('makeId', () => {
     const ids = Array.from({ length: 500 }, () => makeId('tx'));
     expect(new Set(ids).size).toBe(500);
     expect(ids[0]).toMatch(/^tx_\d+(_\d+)?$/);
+  });
+});
+
+describe('servicing transfers', () => {
+  const loan = {
+    servicer: 'Third', servicerType: 'valon', loanNumber: '3',
+    pastServicers: [{ servicer: 'Second', until: '2023-11-01' }, { servicer: 'First', loanNumber: '1', until: '2023-02-01' }],
+  };
+
+  it('lists the servicers oldest first, ending with the current one', () => {
+    expect(loanServicers(loan).map((s) => s.servicer)).toEqual(['First', 'Second', 'Third']);
+    expect(loanServicers({ servicer: 'Only' })).toEqual([{ servicer: 'Only', servicerType: undefined, loanNumber: undefined, until: null }]);
+  });
+
+  it('finds who serviced the loan on a date (a transfer date belongs to the new servicer)', () => {
+    expect(['2023-01-31', '2023-02-01', '2023-10-31', '2023-11-01', undefined].map((d) => servicerOn(loan, d).servicer))
+      .toEqual(['First', 'Second', 'Second', 'Third', 'Third']);
   });
 });

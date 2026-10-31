@@ -120,37 +120,93 @@ export function transfersInTransit(accounts, transactions, maxDays = 5) {
 }
 
 const paymentDate = (p) => p.date || `${p.forMonth}-01`;
+// A recorded payment's balance includes everything up to its statement date (when later than its own)
+const coveredThrough = (p) => (p.statementDate && p.statementDate > paymentDate(p) ? p.statementDate : paymentDate(p));
 
-// A mortgage loan's balance: the loan amount from `start`, each recorded payment's balance after it, then
-// estimates from the payments the loan follows (`paymentKeywords`, matched like category keywords) after
-// the latest recorded one. A followed payment of at least the scheduled amount (monthly P&I plus the
-// latest escrow) pays a month's interest at the loan's rate and the escrow, and the rest is principal; a
-// smaller one is all principal. A payment equal to the latest recorded one's total, within 10 days of it,
-// is that same payment reaching the bank account, so it isn't counted twice. Estimates have `estimated`.
+// A mortgage loan's balance: the loan amount from `start`, then each recorded payment, stepping down on
+// the dates of its statement's listed payments (`activity`), so extra principal paid weeks before the
+// regular payment counts when it was paid; without them, the regular payment and any extra principal
+// step down on the payment's date. A servicer often dates a payment a few days before the bank posts it,
+// so each step counts on the day a followed payment of the same amount left the bank, within 5 days
+// (closest first, each bank payment once), and the money isn't counted in both places. A drop since the previous statement that neither one lists (a
+// payment made between the two periods, e.g. around a servicing transfer) lands on the followed payments
+// in between. Principal applied before `start` counts from `start`.
+// After the latest recorded payment come estimates from the payments the loan follows (`paymentKeywords`,
+// matched like category keywords): one of at least the scheduled amount (monthly P&I plus the latest
+// escrow) pays a month's interest at the loan's rate and the escrow, and the rest is principal; a smaller
+// one is all principal. Payments up to the latest statement's date are already in its balance. Without a
+// statement date, a payment equal to the latest recorded one's total, within 10 days of it, is that same
+// payment reaching the bank account, so it isn't counted twice. Estimates have `estimated`.
 export function loanBalancePoints(loan, payments, transactions = [], start = loan.closingDate || loan.startDate) {
   const recorded = payments.filter((p) => p.loanId === loan.id).sort((a, b) => paymentDate(a).localeCompare(paymentDate(b)));
-  const points = [{ date: start, balance: loan.loanAmount }, ...recorded.map((p) => ({ date: paymentDate(p), balance: p.balanceAfter }))];
+  const followed = followedTransfers({ transferKeywords: loan.paymentKeywords }, transactions)
+    .filter((tx) => tx.type !== 'credit')
+    .sort(byDate);
+  const principalOf = (tx, balance, escrow) => {
+    const scheduled = (loan.monthlyPI || 0) + escrow;
+    return scheduled > 0 && tx.amount >= scheduled - 0.005 ? tx.amount - roundCents((balance * (loan.interestRate || 0)) / 1200) - escrow : tx.amount;
+  };
+
+  const matched = new Set();
+  const bankDate = (a) => {
+    const amount = roundCents(a.amount ?? a.principal);
+    let best = null;
+    for (const tx of followed) {
+      const gap = Math.abs(daysBetween(a.date, tx.date));
+      if (!matched.has(tx) && roundCents(tx.amount) === amount && gap <= 5 && (!best || gap < best.gap)) best = { tx, gap };
+    }
+    if (!best) return a.date;
+    matched.add(best.tx);
+    return best.tx.date;
+  };
+
+  // A payment's dated steps: the statement's listed payments, else the regular payment and any extra
+  // principal, both on the payment's date
+  const stepsOf = (p) => {
+    const listed = (p.activity || []).filter((a) => a.date).sort(byDate);
+    if (listed.length) return listed;
+    const principal = p.principal || 0;
+    const regular = { date: paymentDate(p), principal, amount: roundCents(principal + (p.interest || 0) + (p.escrow || 0)) };
+    return p.extraPrincipal > 0 ? [regular, { date: paymentDate(p), principal: p.extraPrincipal, amount: p.extraPrincipal }] : [regular];
+  };
+
+  const points = [{ date: start, balance: loan.loanAmount }];
+  recorded.forEach((p, i) => {
+    const steps = stepsOf(p).map((a) => ({ ...a, date: bankDate(a) })).sort(byDate);
+    let balance = roundCents(p.balanceAfter + steps.reduce((sum, a) => sum + a.principal, 0));
+    const prev = recorded[i - 1];
+    if (prev) {
+      let between = prev.balanceAfter;
+      for (const tx of followed.filter((t) => !matched.has(t) && t.date > coveredThrough(prev) && t.date < steps[0].date)) {
+        if (between <= balance + 0.005) break;
+        between = Math.max(balance, roundCents(between - principalOf(tx, between, prev.escrow || 0)));
+        points.push({ date: tx.date, balance: between });
+      }
+    }
+    steps.forEach((a, j) => {
+      balance = j === steps.length - 1 ? p.balanceAfter : roundCents(balance - a.principal);
+      points.push({ date: a.date, balance });
+    });
+  });
+
   const base = points[points.length - 1];
   const latest = recorded[recorded.length - 1];
   const escrow = latest?.escrow || 0;
-  const scheduled = (loan.monthlyPI || 0) + escrow;
   const latestTotal = latest && roundCents((latest.principal || 0) + (latest.extraPrincipal || 0) + (latest.interest || 0) + escrow);
+  const statementDate = latest?.statementDate;
+  const since = statementDate && base.date && statementDate > base.date ? statementDate : base.date;
 
   let balance = base.balance;
-  let latestPosted = false;
-  const followed = followedTransfers({ transferKeywords: loan.paymentKeywords }, transactions)
-    .filter((tx) => tx.type !== 'credit' && base.date && tx.date > base.date)
-    .sort(byDate);
-  for (const tx of followed) {
+  let latestPosted = Boolean(statementDate);
+  for (const tx of followed.filter((t) => since && t.date > since)) {
     if (!latestPosted && latestTotal === roundCents(tx.amount) && daysBetween(base.date, tx.date) <= 10) {
       latestPosted = true;
       continue;
     }
-    const notPrincipal = scheduled > 0 && tx.amount >= scheduled - 0.005 ? roundCents((balance * (loan.interestRate || 0)) / 1200) + escrow : 0;
-    balance = Math.max(0, roundCents(balance - (tx.amount - notPrincipal)));
+    balance = Math.max(0, roundCents(balance - principalOf(tx, balance, escrow)));
     points.push({ date: tx.date, balance, estimated: true });
   }
-  return points.filter((p) => p.date);
+  return points.filter((p) => p.date).map((p) => (start && p.date < start ? { ...p, date: start } : p));
 }
 
 // Net worth over time: on every date any balance changes, each account's latest known balance, assets
