@@ -62,3 +62,16 @@ export function buildActualTimeline(payments, startBalance, startDate) {
   }
   return timeline;
 }
+
+// A loan's servicers, oldest first: the past ones (`pastServicers`, each serving `until` the day the next
+// one took over), then the current one from the loan's own fields. A servicing transfer changes who
+// collects the payments and the loan number, not the loan.
+export function loanServicers(loan) {
+  const past = [...(loan.pastServicers || [])].sort((a, b) => (a.until || '').localeCompare(b.until || ''));
+  return [...past, { servicer: loan.servicer, servicerType: loan.servicerType, loanNumber: loan.loanNumber, until: null }];
+}
+
+// The servicer a payment on `date` went to
+export function servicerOn(loan, date) {
+  return loanServicers(loan).find((s) => !s.until || date < s.until);
+}

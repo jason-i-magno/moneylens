@@ -1,5 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { addDays, addMonths } from './dates';
+import { roundCents } from './transactions';
+import { loanServicers } from './mortgageCalculations';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -10,10 +12,21 @@ function parseNum(str) {
   return parseFloat((str || '').replace(/[,$]/g, '')) || 0;
 }
 
+// MM/DD/YYYY or MM/DD/YY
 function parseMmDdYyyy(str) {
-  const m = (str || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const m = (str || '').match(/(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})/);
   if (!m) return null;
-  return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  const year = m[3].length === 2 ? `20${m[3]}` : m[3];
+  return `${year}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+}
+
+const MONTHS = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+
+// "May 3, 2026"
+function parseMonthDayYear(str) {
+  const m = (str || '').match(/([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})/);
+  const month = m && MONTHS[m[1].toLowerCase().slice(0, 3)];
+  return month ? `${m[3]}-${month}-${m[2].padStart(2, '0')}` : null;
 }
 
 // ─── Text extraction ───
@@ -31,6 +44,8 @@ async function extractText(file) {
 
 // ─── Servicer detection ───
 function detectServicer(text) {
+  // Carrington statements use Valon's layout (and can mention Lakeview, so this check comes first)
+  if (/Valon|Carrington/i.test(text) && /Past\s*Payments\s*Breakdown/i.test(text)) return 'valon';
   if (/Lakeview/i.test(text) && /LoanCare/i.test(text)) return 'lakeview';
   if (/Rocket\s*Mortgage/i.test(text)) return 'rocket';
   return 'unknown';
@@ -93,6 +108,8 @@ function parseLakeview(text) {
 }
 
 // ─── Rocket parser ───
+// "Payment History" totals the statement period under "Last Paid"; "Loan Activity" lists each payment
+// with its date: "Principal Payment Applied" is all principal, "Payment Received" is the regular payment
 function parseRocket(text) {
   const balance = text.match(/Principal\s*Balance:\*?\s*\$?([\d,]+\.\d{2})/i);
   const statementDate = text.match(/Statement\s*Date:\s*(\d{2}\/\d{2}\/\d{4})/);
@@ -103,6 +120,8 @@ function parseRocket(text) {
   // Extract Last Paid principal and interest from Payment History
   // The text has "Principal: $X" and "Interest: $Y" after "Last Paid"
   const lastPaidSection = text.match(/Last\s*Paid[\s\S]*?Principal:\s*\$([\d,]+\.\d{2})[\s\S]*?Interest:\s*\$([\d,]+\.\d{2})/i);
+  const lastPaidEscrow = text.match(/Last\s*Paid[\s\S]*?Escrow[^:$]*:\s*\$([\d,]+\.\d{2})/i);
+  const totalPaid = text.match(/Last\s*Paid[\s\S]*?Total\s*Paid:\s*\$([\d,]+\.\d{2})/i);
 
   if (!lastPaidSection || !balance) return null;
 
@@ -113,8 +132,22 @@ function parseRocket(text) {
   // forMonth: the month before the due date
   const forMonth = dueDate ? addMonths(`${dueDate[3]}-${dueDate[1]}`, -1) : null;
 
-  // Payment date: first of the forMonth (approximation)
-  const payDate = forMonth ? `${forMonth}-01` : null;
+  // Each payment's principal: all of a principal payment; what's left of a regular payment after the
+  // period's interest, escrow and fees. Used only when the rows add up to the period's Total Paid.
+  const principal = parseNum(lastPaidSection[1]);
+  const rows = [...text.matchAll(/(\d{2}\/\d{2}\/\d{2,4})\s+(Principal\s+Payment\s+Applied|Payment\s+Received)\s+\$([\d,]+\.\d{2})/gi)]
+    .map((m) => ({ date: parseMmDdYyyy(m[1]), extra: /^Principal/i.test(m[2]), amount: parseNum(m[3]) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  let notPrincipal = totalPaid ? roundCents(parseNum(totalPaid[1]) - principal) : 0;
+  const activity = rows.map((r) => {
+    const share = r.extra ? 0 : Math.min(r.amount, notPrincipal);
+    notPrincipal = roundCents(notPrincipal - share);
+    return { date: r.date, principal: roundCents(r.amount - share), amount: r.amount };
+  });
+  const complete = Boolean(totalPaid) && rows.length > 0 && Math.abs(notPrincipal) < 0.005
+    && Math.abs(activity.reduce((sum, a) => sum + a.principal, 0) - principal) < 0.005;
+  const extra = complete ? roundCents(rows.filter((r) => r.extra).reduce((sum, r) => sum + r.amount, 0)) : 0;
+  const regular = rows.filter((r) => !r.extra).at(-1);
 
   return {
     statementDate: statementDate ? parseMmDdYyyy(statementDate[1]) : null,
@@ -123,27 +156,92 @@ function parseRocket(text) {
     interestRate: rate ? parseFloat(rate[1]) : null,
     amountDue: amountDue ? parseNum(amountDue[1]) : null,
     payment: {
-      date: payDate,
+      // The regular payment's date; without the rows, the first of the forMonth (approximation)
+      date: complete && regular ? regular.date : forMonth ? `${forMonth}-01` : null,
       forMonth,
-      principal: parseNum(lastPaidSection[1]), // total principal until split
+      principal: roundCents(principal - extra), // without the rows, the total principal until split
       interest: parseNum(lastPaidSection[2]),
-      extraPrincipal: 0,
+      extraPrincipal: extra,
       balanceAfter: parseNum(balance[1]),
       statementDate: statementDate ? parseMmDdYyyy(statementDate[1]) : null,
-      escrow: 0,
+      escrow: lastPaidEscrow ? parseNum(lastPaidEscrow[1]) : 0,
+      ...(complete && { activity: activity.filter((a) => a.principal !== 0) }),
     },
   };
 }
 
-// Rocket reports one principal figure; anything above the scheduled principal is extra
+// ─── Valon / Carrington parser ───
+// Statement Activity rows: MM/DD/YY description, then principal, interest, escrow, fees paid, unapplied,
+// fees charged and total. An "Additional Principal $X" line marks a payment's extra principal; it can land
+// on the next page. "Past Payments Breakdown" totals the period ("Since Last Statement").
+const AMOUNT = '(-?\\$[\\d,]+\\.\\d{2})';
+const ACTIVITY_ROW = new RegExp(`(\\d{2}\\/\\d{2}\\/\\d{2,4})\\s+[^$]*?${Array(7).fill(AMOUNT).join('\\s+')}`, 'g');
+
+function parseValon(text) {
+  const balance = text.match(/Principal\s*Balance\s*(?:\([^)]*\))?\s*\$([\d,]+\.\d{2})/i);
+  const statementDate = text.match(/Statement\s*Date\s+([A-Za-z]+\s+\d{1,2},\s*\d{4})/);
+  const dueDate = text.match(/Payment\s*Due\s*Date\s+([A-Za-z]+\s+\d{1,2},\s*\d{4})/);
+  const loanNumber = text.match(/Loan\s*Number\s+(\d+)/);
+  const rate = text.match(/Interest\s*Rate\s+([\d.]+)%/i);
+  const breakdown = text.match(/Since\s*Last\s*Statement\s*Year\s*to\s*Date\s*Principal\s*(-?\$[\d,]+\.\d{2})\s+\S+\s*Interest\s*(-?\$[\d,]+\.\d{2})\s+\S+\s*Escrow\s*(-?\$[\d,]+\.\d{2})/i);
+  const due = dueDate && parseMonthDayYear(dueDate[1]);
+  if (!balance || !due) return null;
+
+  const rows = [...text.matchAll(ACTIVITY_ROW)].map((m) => ({
+    date: parseMmDdYyyy(m[1]),
+    principal: parseNum(m[2]),
+    interest: parseNum(m[3]),
+    escrow: parseNum(m[4]),
+    total: parseNum(m[8]),
+  }));
+  const extra = [...text.matchAll(/Additional\s+Principal\s+\$([\d,]+\.\d{2})/g)].reduce((s, m) => s + parseNum(m[1]), 0);
+  const sum = (key) => roundCents(rows.reduce((s, r) => s + r[key], 0));
+
+  // The breakdown is the period's total; the rows give the dates (unless one of them didn't read)
+  const principal = breakdown ? parseNum(breakdown[1]) : sum('principal');
+  const interest = breakdown ? parseNum(breakdown[2]) : sum('interest');
+  const escrow = breakdown ? parseNum(breakdown[3]) : sum('escrow');
+  const rowsComplete = rows.length > 0 && Math.abs(sum('principal') - principal) < 0.005;
+
+  const parsedStatementDate = statementDate ? parseMonthDayYear(statementDate[1]) : null;
+  const result = {
+    statementDate: parsedStatementDate,
+    loanNumber: loanNumber ? loanNumber[1] : null,
+    balanceAfter: parseNum(balance[1]),
+    interestRate: rate ? parseFloat(rate[1]) : null,
+    payment: null,
+  };
+  if (principal === 0 && interest === 0 && escrow === 0) return result; // no payments this period
+
+  // The regular payment's date (the one that paid interest), else the latest payment's
+  const byDate = [...rows].sort((a, b) => a.date.localeCompare(b.date));
+  const regular = byDate.filter((r) => r.interest > 0).at(-1) || byDate.at(-1);
+  return {
+    ...result,
+    payment: {
+      date: regular?.date || parsedStatementDate,
+      forMonth: addMonths(due.slice(0, 7), -1), // the installment paid: the month before the next due date
+      principal: roundCents(principal - extra),
+      interest,
+      extraPrincipal: roundCents(extra),
+      escrow,
+      balanceAfter: parseNum(balance[1]),
+      statementDate: parsedStatementDate,
+      ...(rowsComplete && { activity: byDate.filter((r) => r.principal !== 0).map((r) => ({ date: r.date, principal: r.principal, amount: r.total })) }),
+    },
+  };
+}
+
+// Rocket reports one principal figure for the regular payments; anything above the scheduled principal is
+// extra (added to the principal payments already counted as extra)
 export function splitRocketPrincipal(payment, monthlyPI) {
   if (!monthlyPI) return payment;
-  const scheduled = Math.round((monthlyPI - payment.interest) * 100) / 100;
+  const scheduled = roundCents(monthlyPI - payment.interest);
   if (scheduled <= 0 || scheduled > payment.principal) return payment;
   return {
     ...payment,
     principal: scheduled,
-    extraPrincipal: Math.round((payment.principal - scheduled) * 100) / 100,
+    extraPrincipal: roundCents((payment.extraPrincipal || 0) + payment.principal - scheduled),
   };
 }
 
@@ -160,24 +258,22 @@ export async function parseMortgagePdfs(files, existingLoans, existingPayments =
       let parsed = null;
       if (servicer === 'lakeview') parsed = parseLakeview(text);
       else if (servicer === 'rocket') parsed = parseRocket(text);
+      else if (servicer === 'valon') parsed = parseValon(text);
 
-      if (!parsed) {
-        results.push({ fileName: file.name, servicer, parsed: false, payment: null, loanId: null, isDuplicate: false });
+      if (!parsed?.payment) {
+        // A statement can be readable but list no payments (e.g. the first one after a servicing transfer)
+        const error = parsed ? 'No payments on this statement' : servicer === 'unknown' ? 'Unrecognized statement' : 'Could not read the payment';
+        results.push({ fileName: file.name, servicer, parsed: false, noPayments: Boolean(parsed), error, payment: null, loanId: null, isDuplicate: false });
         continue;
       }
 
-      // Match to existing loan by loan number or servicer type
-      let loanId = null;
-      if (parsed.loanNumber) {
-        const match = existingLoans.find((l) => l.loanNumber === parsed.loanNumber);
-        if (match) loanId = match.id;
-      }
-      if (!loanId) {
-        const match = existingLoans.find((l) => l.servicerType === servicer);
-        if (match) loanId = match.id;
-      }
+      // Match to existing loan by loan number, then servicer type: the current servicer's first, then a past
+      // one's (a loan keeps its servicers through a servicing transfer)
+      const loan = (parsed.loanNumber && existingLoans.find((l) => loanServicers(l).some((s) => s.loanNumber === parsed.loanNumber)))
+        || existingLoans.find((l) => l.servicerType === servicer)
+        || existingLoans.find((l) => loanServicers(l).some((s) => s.servicerType === servicer));
+      const loanId = loan?.id || null;
 
-      const loan = existingLoans.find((l) => l.id === loanId);
       const payment = servicer === 'rocket'
         ? splitRocketPrincipal(parsed.payment, loan?.monthlyPI || parsed.amountDue)
         : parsed.payment;
@@ -193,10 +289,11 @@ export async function parseMortgagePdfs(files, existingLoans, existingPayments =
         parsed: true,
         payment,
         loanId,
+        loanNumber: parsed.loanNumber,
         isDuplicate,
       });
     } catch {
-      results.push({ fileName: file.name, servicer: 'unknown', parsed: false, payment: null, loanId: null, isDuplicate: false });
+      results.push({ fileName: file.name, servicer: 'unknown', parsed: false, error: 'Could not read the PDF', payment: null, loanId: null, isDuplicate: false });
     }
   }
 
@@ -221,7 +318,6 @@ function parseUSBankStatement(text) {
 
   if (!endingBalance) return null;
 
-  const MONTHS = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
   const monthStr = MONTHS[endingBalance[1].toLowerCase().slice(0, 3)] || '01';
   const endDate = `${endingBalance[3]}-${monthStr}-${endingBalance[2].padStart(2, '0')}`;
 

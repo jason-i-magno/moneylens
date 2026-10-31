@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { formatCurrency } from '../constants/categories';
-import { generateAmortization, buildActualTimeline, extrapolateFromBalance } from '../utils/mortgageCalculations';
+import { generateAmortization, buildActualTimeline, extrapolateFromBalance, loanServicers, servicerOn } from '../utils/mortgageCalculations';
 import Modal from '../components/Modal';
 import FileDropZone from '../components/FileDropZone';
 import EmptyState from '../components/EmptyState';
@@ -9,8 +9,17 @@ import ConfirmButton from '../components/ConfirmButton';
 import { addMonths, todayISO } from '../utils/dates';
 import { parseKeywordList } from '../utils/categorizer';
 
+// Statement formats the PDF import can read
+const SERVICER_TYPES = [
+  { id: 'lakeview', label: 'Lakeview / LoanCare' },
+  { id: 'rocket', label: 'Rocket Mortgage' },
+  { id: 'valon', label: 'Valon / Carrington' },
+];
+const servicerName = (s) => s.servicer || SERVICER_TYPES.find((t) => t.id === s.servicerType)?.label || 'Unnamed servicer';
+
 // ─── Loan Summary Card ───
 function LoanSummary({ loan, onEdit }) {
+  const past = loanServicers(loan).slice(0, -1);
   const fields = [
     ['Loan Amount', formatCurrency(loan.loanAmount)],
     ['Interest Rate', `${loan.interestRate}%`],
@@ -20,6 +29,7 @@ function LoanSummary({ loan, onEdit }) {
     ['Maturity Date', loan.maturityDate],
     ['Loan Type', loan.loanType],
     ['Servicer', loan.servicer],
+    past.length > 0 && ['Previous Servicers', past.map((s) => `${servicerName(s)}${s.until ? ` (until ${s.until})` : ''}`).join(', ')],
     loan.closingCosts > 0 && ['Closing Costs', formatCurrency(loan.closingCosts)],
     loan.cashToClose > 0 && ['Cash to Close', formatCurrency(loan.cashToClose)],
     loan.payoffDate && ['Payoff Date', loan.payoffDate],
@@ -187,11 +197,23 @@ const EMPTY_LOAN = {
 function LoanForm({ loan, onSave, onDelete, properties }) {
   const [form, setForm] = useState(loan || EMPTY_LOAN);
   const [keywords, setKeywords] = useState((loan?.paymentKeywords || []).join(', '));
+  const [pastServicers, setPastServicers] = useState(loan?.pastServicers || []);
+  const [transferDate, setTransferDate] = useState(null); // null: the transfer fields are closed
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  const setPast = (i, key) => (e) => setPastServicers((list) => list.map((s, j) => (j === i ? { ...s, [key]: e.target.value } : s)));
+
+  // A servicing transfer: the current servicer moves to the list, and the new one is entered in its place
+  const recordTransfer = () => {
+    setPastServicers((list) => [...list, { servicer: form.servicer, servicerType: form.servicerType, loanNumber: form.loanNumber, until: transferDate }]);
+    setForm((f) => ({ ...f, servicer: '', servicerType: '', loanNumber: '' }));
+    setTransferDate(null);
+  };
+
   const handleSave = () => {
     onSave({
       ...form,
       paymentKeywords: parseKeywordList(keywords),
+      pastServicers: pastServicers.length ? [...pastServicers].sort((a, b) => (a.until || '').localeCompare(b.until || '')) : undefined,
       loanAmount: parseFloat(form.loanAmount) || 0,
       interestRate: parseFloat(form.interestRate) || 0,
       termYears: parseInt(form.termYears) || 0,
@@ -222,19 +244,53 @@ function LoanForm({ loan, onSave, onDelete, properties }) {
         <label>Servicer Type (for PDF parsing)</label>
         <select value={form.servicerType} onChange={set('servicerType')}>
           <option value="">None</option>
-          <option value="lakeview">Lakeview / LoanCare</option>
-          <option value="rocket">Rocket Mortgage</option>
+          {SERVICER_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
+      </div>
+      <div className="form-group"><label>Loan Number</label><input value={form.loanNumber} onChange={set('loanNumber')} /></div>
+      <div className="form-group">
+        <label>Previous Servicers</label>
+        {pastServicers.map((s, i) => (
+          <div key={i} className="past-servicer">
+            <label>Servicer<input value={s.servicer || ''} onChange={setPast(i, 'servicer')} /></label>
+            <label>
+              Type
+              <select value={s.servicerType || ''} onChange={setPast(i, 'servicerType')}>
+                <option value="">None</option>
+                {SERVICER_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </select>
+            </label>
+            <label>Loan Number<input value={s.loanNumber || ''} onChange={setPast(i, 'loanNumber')} /></label>
+            <label>Serviced Until<input type="date" value={s.until || ''} onChange={setPast(i, 'until')} /></label>
+            <button className="btn-icon danger" onClick={() => setPastServicers((list) => list.filter((_, j) => j !== i))}>Remove</button>
+          </div>
+        ))}
+        {transferDate === null ? (
+          <button className="btn-secondary" onClick={() => setTransferDate('')}>Record a Servicing Transfer</button>
+        ) : (
+          <div className="past-servicer">
+            <label className="past-servicer-wide">
+              Date the new servicer took over
+              <input type="date" value={transferDate} onChange={(e) => setTransferDate(e.target.value)} />
+            </label>
+            <button className="btn-primary" disabled={!transferDate} onClick={recordTransfer}>Move Current Servicer Here</button>
+            <button className="btn-secondary" onClick={() => setTransferDate(null)}>Cancel</button>
+          </div>
+        )}
+        <p className="muted settings-help past-servicer-help">
+          When servicing moves to a new company, the loan stays the same. Record the transfer to move the servicer
+          above into this list, then enter the new one. Statements from any of them match this loan.
+        </p>
       </div>
       <div className="form-group">
         <label>Follow payments matching (keywords, comma-separated)</label>
         <input value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="e.g. my servicer" />
         <p className="muted settings-help">
-          Net Worth lowers the balance with each matching payment from your accounts after the latest statement, estimating
-          the interest at the loan&apos;s rate, until a newer statement replaces the estimate.
+          Net Worth counts each statement&apos;s payments on the day the matching payment left your accounts, and lowers the
+          balance with each matching payment after the latest statement, estimating the interest at the loan&apos;s rate,
+          until a newer statement replaces the estimate.
         </p>
       </div>
-      <div className="form-group"><label>Loan Number</label><input value={form.loanNumber} onChange={set('loanNumber')} /></div>
       <div className="form-group"><label>Loan Amount</label><input type="number" value={form.loanAmount} onChange={set('loanAmount')} /></div>
       <div className="form-group"><label>Interest Rate (%)</label><input type="number" step="0.001" value={form.interestRate} onChange={set('interestRate')} /></div>
       <div className="form-group"><label>Term (years)</label><input type="number" value={form.termYears} onChange={set('termYears')} /></div>
@@ -610,6 +666,8 @@ export default function Mortgage({ data, finance }) {
     setPdfResults(results);
   };
 
+  const unmatchedPdf = pdfResults.find((r) => r.parsed && !r.loanId);
+
   const handleImportPdfPayments = () => {
     const toImport = pdfResults.filter((r) => r.parsed && !r.isDuplicate && r.loanId);
     finance.importMortgagePayments(toImport.map((r) => ({
@@ -623,6 +681,7 @@ export default function Mortgage({ data, finance }) {
       balanceAfter: r.payment.balanceAfter,
       source: 'pdf_import',
       statementDate: r.payment.statementDate,
+      ...(r.payment.activity && { activity: r.payment.activity }),
     })));
     setPdfResults([]);
   };
@@ -639,6 +698,8 @@ export default function Mortgage({ data, finance }) {
   };
 
   const loanLabels = Object.fromEntries(loans.map((l) => [l.id, l.label]));
+  const loansById = Object.fromEntries(loans.map((l) => [l.id, l]));
+  const showServicer = loans.some((l) => l.pastServicers?.length);
   const sortedPayments = [...payments].sort((a, b) => b.forMonth.localeCompare(a.forMonth));
 
   const hasData = loans.length > 0;
@@ -812,7 +873,7 @@ export default function Mortgage({ data, finance }) {
         <>
           <div className="card">
             <h3>Upload Statement PDFs</h3>
-            <p className="muted" style={{ marginBottom: 12 }}>Upload Lakeview or Rocket Mortgage monthly statements to extract payment data.</p>
+            <p className="muted" style={{ marginBottom: 12 }}>Upload Lakeview, Rocket Mortgage, or Valon / Carrington monthly statements to extract payment data.</p>
             <FileDropZone onFiles={handlePdfUpload} multiple accept=".pdf" label="Drop statement PDFs here or" />
             {pdfResults.length > 0 && (
               <div style={{ marginTop: 16 }}>
@@ -824,7 +885,7 @@ export default function Mortgage({ data, finance }) {
                     </thead>
                     <tbody>
                       {pdfResults.map((r, i) => (
-                        <tr key={i} className={r.isDuplicate ? 'row-duplicate' : r.parsed ? 'has-actual' : 'row-invalid'}>
+                        <tr key={i} className={r.isDuplicate || r.noPayments ? 'row-duplicate' : r.parsed ? 'has-actual' : 'row-invalid'}>
                           <td>{r.fileName}</td>
                           <td>{r.servicer || '?'}</td>
                           <td>{r.payment?.forMonth || '-'}</td>
@@ -834,7 +895,7 @@ export default function Mortgage({ data, finance }) {
                           <td>{r.payment ? formatCurrency(r.payment.balanceAfter) : '-'}</td>
                           <td>
                             {r.isDuplicate && <span className="badge-warn">Duplicate</span>}
-                            {!r.parsed && <span className="badge-error">Parse Error</span>}
+                            {!r.parsed && <span className={r.noPayments ? 'badge-warn' : 'badge-error'}>{r.error || 'Parse Error'}</span>}
                             {r.parsed && !r.isDuplicate && !r.loanId && <span className="badge-warn">No matching loan</span>}
                           </td>
                         </tr>
@@ -842,6 +903,15 @@ export default function Mortgage({ data, finance }) {
                     </tbody>
                   </table>
                 </div>
+                {unmatchedPdf && (
+                  <p className="muted settings-help">
+                    Statements match a loan by its Loan Number, then by its Servicer Type (current or previous servicers).
+                    After a servicing transfer, edit the loan, choose Record a Servicing Transfer, and enter the new
+                    servicer
+                    {unmatchedPdf.loanNumber && ` (loan number ${unmatchedPdf.loanNumber} on these statements)`}; then upload
+                    the statements again.
+                  </p>
+                )}
                 <div className="modal-actions" style={{ marginTop: 12 }}>
                   <button className="btn-primary" onClick={handleImportPdfPayments}>
                     Import {pdfResults.filter((r) => r.parsed && !r.isDuplicate && r.loanId).length} Payments
@@ -858,13 +928,14 @@ export default function Mortgage({ data, finance }) {
               <div className="amort-table-wrap">
                 <table className="amort-table">
                   <thead>
-                    <tr><th>Month</th><th>Loan</th><th>Principal</th><th>Extra</th><th>Interest</th><th>Balance</th><th>Source</th><th></th></tr>
+                    <tr><th>Month</th><th>Loan</th>{showServicer && <th>Servicer</th>}<th>Principal</th><th>Extra</th><th>Interest</th><th>Balance</th><th>Source</th><th></th></tr>
                   </thead>
                   <tbody>
                     {sortedPayments.map((p) => (
                       <tr key={p.id}>
                         <td>{p.forMonth}</td>
                         <td className="desc-cell">{loanLabels[p.loanId] || '?'}</td>
+                        {showServicer && <td className="desc-cell">{loansById[p.loanId] ? servicerName(servicerOn(loansById[p.loanId], p.date || `${p.forMonth}-01`)) : '-'}</td>}
                         <td>{formatCurrency(p.principal)}</td>
                         <td>{formatCurrency(p.extraPrincipal || 0)}</td>
                         <td>{formatCurrency(p.interest)}</td>
