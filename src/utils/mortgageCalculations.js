@@ -14,8 +14,9 @@ export function generateAmortization(loanAmount, annualRate, termYears, startDat
     balance = Math.round((balance - principal) * 100) / 100;
     if (balance < 0) balance = 0;
 
-    const month = ((startMonth - 1 + i) % 12) + 1;
-    const year = startYear + Math.floor((startMonth - 1 + i) / 12);
+    // Payment 1 is due the month after the loan starts (interest is paid in arrears), the last on the maturity date
+    const month = ((startMonth + i) % 12) + 1;
+    const year = startYear + Math.floor((startMonth + i) / 12);
     const dateStr = `${year}-${String(month).padStart(2, '0')}`;
 
     schedule.push({

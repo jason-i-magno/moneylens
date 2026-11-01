@@ -4,7 +4,7 @@ import { addDays, addMonths, daysBetween, todayISO, getMonthOptions } from './da
 import { detectDateFormat, parseDate } from './csvParser';
 import { findDuplicates } from './duplicateDetector';
 import { makeId } from './ids';
-import { loanServicers, servicerOn } from './mortgageCalculations';
+import { generateAmortization, loanServicers, servicerOn } from './mortgageCalculations';
 
 describe('income and spending rules', () => {
   const paycheck = { type: 'credit', category: 'other', amount: 3000 };
@@ -95,6 +95,16 @@ describe('makeId', () => {
     const ids = Array.from({ length: 500 }, () => makeId('tx'));
     expect(new Set(ids).size).toBe(500);
     expect(ids[0]).toMatch(/^tx_\d+(_\d+)?$/);
+  });
+});
+
+describe('generateAmortization', () => {
+  it('puts the first payment in the month after the loan starts and the last on the maturity date', () => {
+    // 1-year loan at 12% a year: 1% a month
+    const schedule = generateAmortization(12000, 12, 1, '2023-11-01');
+    expect(schedule.map((r) => r.date)).toEqual(['2023-12', '2024-01', '2024-02', '2024-03', '2024-04', '2024-05', '2024-06', '2024-07', '2024-08', '2024-09', '2024-10', '2024-11']);
+    expect(schedule[0]).toMatchObject({ paymentNumber: 1, interest: 120, principal: 946.19, balance: 11053.81 });
+    expect(schedule.at(-1).balance).toBe(0);
   });
 });
 
