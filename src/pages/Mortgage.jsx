@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { formatCurrency } from '../constants/categories';
+import { chartTooltipProps } from '../constants/chartTooltip';
 import { generateAmortization, buildActualTimeline, extrapolateFromBalance, loanServicers, servicerOn } from '../utils/mortgageCalculations';
 import Modal from '../components/Modal';
 import FileDropZone from '../components/FileDropZone';
@@ -16,6 +17,15 @@ const SERVICER_TYPES = [
   { id: 'valon', label: 'Valon / Carrington' },
 ];
 const servicerName = (s) => s.servicer || SERVICER_TYPES.find((t) => t.id === s.servicerType)?.label || 'Unnamed servicer';
+
+// ─── Balance chart setup (per-loan and combined) ───
+const CHART_MARGIN = { left: 10, right: 20, top: 10, bottom: 10 };
+const Y_AXIS_WIDTH = 100;
+const BALANCE_LABELS = { projected: 'Projected (Original Min)', actual: 'Actual Balance', extrapolated: 'New Trajectory (Min)' };
+const BALANCE_TOOLTIP = {
+  formatter: (value, name) => [formatCurrency(value), BALANCE_LABELS[name] || name],
+  ...chartTooltipProps(CHART_MARGIN.left + Y_AXIS_WIDTH),
+};
 
 // ─── Loan Summary Card ───
 function LoanSummary({ loan, onEdit }) {
@@ -64,24 +74,18 @@ function BalanceChart({ title, projected, actual, extrapolated, refiDate }) {
     return Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
   }, [projected, actual, extrapolated]);
 
-  const LABELS = { projected: 'Projected (Original Min)', actual: 'Actual Balance', extrapolated: 'New Trajectory (Min)' };
-
   return (
     <div className="card">
       <h3>{title}</h3>
       <ResponsiveContainer width="100%" height={350}>
-        <LineChart data={data} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
+        <LineChart data={data} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
           <XAxis dataKey="date" stroke="#6b7280" tick={{ fontSize: 11 }} angle={-45} textAnchor="end" height={60} />
-          <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={100} />
+          <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={Y_AXIS_WIDTH} />
           {refiDate && <ReferenceLine x={refiDate} stroke="#C97CE8" strokeDasharray="4 4" label={{ value: 'Refi', fill: '#C97CE8', fontSize: 12 }} />}
-          <Tooltip
-            formatter={(value, name) => [formatCurrency(value), LABELS[name] || name]}
-            contentStyle={{ backgroundColor: '#222228', border: '1px solid #333', borderRadius: 8 }}
-            labelStyle={{ color: '#E8E4DD' }}
-          />
+          <Tooltip {...BALANCE_TOOLTIP} />
           <Line type="monotone" dataKey="projected" name="projected" stroke="#6b7280" strokeWidth={2} strokeDasharray="6 3" dot={false} />
-          <Line type="monotone" dataKey="actual" name="actual" stroke="#7CE8A3" strokeWidth={2.5} dot={{ r: 3 }} />
+          <Line type="monotone" dataKey="actual" name="actual" stroke="#7CE8A3" strokeWidth={2.5} dot={false} connectNulls />
           {extrapolated && <Line type="monotone" dataKey="extrapolated" name="extrapolated" stroke="#E8927C" strokeWidth={2} strokeDasharray="4 2" dot={false} />}
         </LineChart>
       </ResponsiveContainer>
@@ -844,21 +848,14 @@ export default function Mortgage({ data, finance }) {
           <h3>Combined Balance Over Time</h3>
           <p className="page-subtitle" style={{ marginBottom: 16 }}>All loans — projected vs actual</p>
           <ResponsiveContainer width="100%" height={400}>
-            <LineChart data={combinedData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
+            <LineChart data={combinedData} margin={CHART_MARGIN}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
               <XAxis dataKey="date" stroke="#6b7280" tick={{ fontSize: 11 }} angle={-45} textAnchor="end" height={60} />
-              <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={100} />
+              <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={Y_AXIS_WIDTH} />
               {refiDate && <ReferenceLine x={refiDate} stroke="#C97CE8" strokeDasharray="4 4" label={{ value: 'Refi', fill: '#C97CE8', fontSize: 12 }} />}
-              <Tooltip
-                formatter={(value, name) => {
-                  const labels = { projected: 'Projected (Original Min)', actual: 'Actual Balance', extrapolated: 'New Trajectory (Min)' };
-                  return [formatCurrency(value), labels[name] || name];
-                }}
-                contentStyle={{ backgroundColor: '#222228', border: '1px solid #333', borderRadius: 8 }}
-                labelStyle={{ color: '#E8E4DD' }}
-              />
+              <Tooltip {...BALANCE_TOOLTIP} />
               <Line type="monotone" dataKey="projected" name="projected" stroke="#6b7280" strokeWidth={2} strokeDasharray="6 3" dot={false} />
-              <Line type="monotone" dataKey="actual" name="actual" stroke="#7CE8A3" strokeWidth={2.5} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+              <Line type="monotone" dataKey="actual" name="actual" stroke="#7CE8A3" strokeWidth={2.5} dot={false} connectNulls />
               <Line type="monotone" dataKey="extrapolated" name="extrapolated" stroke="#E8927C" strokeWidth={2} strokeDasharray="4 2" dot={false} />
             </LineChart>
           </ResponsiveContainer>

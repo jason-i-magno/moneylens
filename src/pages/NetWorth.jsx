@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { formatCurrency } from '../constants/categories';
+import { chartTooltipProps } from '../constants/chartTooltip';
 import { BUILTIN_BANK_PROFILES } from '../constants/bankProfiles';
 import Modal from '../components/Modal';
 import FileDropZone from '../components/FileDropZone';
@@ -19,6 +20,9 @@ const ACCOUNT_CATEGORIES = [
 ];
 
 const CATEGORY_MAP = Object.fromEntries(ACCOUNT_CATEGORIES.map((c) => [c.id, c]));
+
+const CHART_MARGIN = { left: 10, right: 20, top: 10, bottom: 10 };
+const Y_AXIS_WIDTH = 100;
 
 export default function NetWorth({ data, finance }) {
   const [modal, setModal] = useState(null);
@@ -240,15 +244,14 @@ export default function NetWorth({ data, finance }) {
             >Liabilities</button>
           </div>
           <ResponsiveContainer width="100%" height={350}>
-            <LineChart data={chartData} margin={{ left: 10, right: 20, top: 10, bottom: 10 }}>
+            <LineChart data={chartData} margin={CHART_MARGIN}>
               <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
               <XAxis dataKey="date" stroke="#6b7280" tick={{ fontSize: 12 }} />
-              <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={100} />
+              <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={Y_AXIS_WIDTH} />
               <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="4 4" />
               <Tooltip
                 formatter={(value, name) => [formatCurrency(value), TOOLTIP_LABELS[name] || name]}
-                contentStyle={{ backgroundColor: '#222228', border: '1px solid #333', borderRadius: 8 }}
-                labelStyle={{ color: '#E8E4DD' }}
+                {...chartTooltipProps(CHART_MARGIN.left + Y_AXIS_WIDTH)}
                 itemSorter={(item) => -item.value}
               />
               {visible.netWorth && <Line type="monotone" dataKey="netWorth" name="netWorth" stroke="#E8E4DD" strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} />}

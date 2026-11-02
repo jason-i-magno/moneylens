@@ -4,11 +4,11 @@ import { CATEGORIES, INCOME_CATEGORIES, SPENDING_CATEGORIES, formatCurrency } fr
 import EmptyState from '../components/EmptyState';
 import { isIncome, isSpending } from '../utils/transactions';
 import { buildCategoryData, buildNetData } from '../utils/trends';
+import { chartTooltipProps } from '../constants/chartTooltip';
 
-const TOOLTIP_STYLE = {
-  contentStyle: { backgroundColor: '#222228', border: '1px solid #333', borderRadius: 8 },
-  labelStyle: { color: '#E8E4DD' },
-};
+const CHART_MARGIN = { left: 10, right: 20, top: 10, bottom: 10 };
+const Y_AXIS_WIDTH = 90;
+const TOOLTIP_PROPS = chartTooltipProps(CHART_MARGIN.left + Y_AXIS_WIDTH);
 
 const XAXIS_PROPS = (groupBy) => ({
   dataKey: 'label',
@@ -63,15 +63,15 @@ function TrendChart({ data, series, groupBy, cumulative, height, zeroLine = fals
   const Chart = cumulative ? LineChart : BarChart;
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <Chart data={data} margin={{ left: 10, right: 20, top: 10, bottom: 10 }} {...(cumulative ? {} : { barGap: 2, barCategoryGap: '20%' })}>
+      <Chart data={data} margin={CHART_MARGIN} {...(cumulative ? {} : { barGap: 2, barCategoryGap: '20%' })}>
         <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
         <XAxis {...XAXIS_PROPS(groupBy)} padding={cumulative ? { left: 24, right: 24 } : undefined} />
-        <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={90} />
+        <YAxis tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" width={Y_AXIS_WIDTH} />
         {zeroLine && <ReferenceLine y={0} stroke="#6b7280" strokeDasharray="4 4" />}
         <Tooltip
           formatter={(value, key) => [formatCurrency(value), names[key] || key]}
           cursor={cumulative ? true : { fill: '#E8E4DD', fillOpacity: 0.06 }}
-          {...TOOLTIP_STYLE}
+          {...TOOLTIP_PROPS}
           itemSorter={(item) => -item.value}
         />
         {series.map((s) => (cumulative ? (

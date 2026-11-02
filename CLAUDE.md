@@ -320,6 +320,7 @@ moneylens/
     │   ├── categories.js          # Spending + income categories, CATEGORY_MAP, categoriesFor, formatCurrency
     │   ├── defaultKeywords.js     # Generic category + subscription keywords (+ private file if present)
     │   ├── privateKeywords.local.js  # Gitignored: the user's personal keywords (may not exist)
+    │   ├── chartTooltip.js        # chartTooltipProps: Recharts tooltip style that stays inside the chart on a phone
     │   ├── plaidCategories.js     # Plaid personal_finance_category → our category (fallback)
     │   └── bankProfiles.js        # Built-in CSV profiles, filename detection, profile → account map, Plaid institution hints
     ├── hooks/
@@ -373,6 +374,7 @@ moneylens/
 - `const` by default, `let` only when reassignment is needed. Prefer early returns.
 - Styling: use classes in `App.css`. Inline styles only for data-driven values (category colors, bar widths). Some older static inline styles remain; don't add new ones.
 - Destructive deletes of records with dependents (loans, properties, accounts) go through `ConfirmButton`.
+- Chart tooltips: spread `chartTooltipProps(margin.left + YAxis width)` into every Recharts `<Tooltip>`. Recharts never starts a tooltip left of the plot area, so without the cap a wide one sticks out past the chart on a phone and the page scrolls sideways.
 
 ## Personal Data
 

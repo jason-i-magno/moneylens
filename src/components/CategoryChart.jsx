@@ -1,5 +1,9 @@
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Cell, ReferenceLine, ResponsiveContainer } from 'recharts';
 import { SPENDING_CATEGORIES, formatCurrency } from '../constants/categories';
+import { chartTooltipProps } from '../constants/chartTooltip';
+
+const CHART_MARGIN = { left: 100, right: 30, top: 10, bottom: 10 };
+const Y_AXIS_WIDTH = 90;
 
 export default function CategoryChart({ spending, budgets = {} }) {
   const chartData = SPENDING_CATEGORIES
@@ -19,13 +23,12 @@ export default function CategoryChart({ spending, budgets = {} }) {
 
   return (
     <ResponsiveContainer width="100%" height={chartData.length * 50 + 40}>
-      <BarChart data={chartData} layout="vertical" margin={{ left: 100, right: 30, top: 10, bottom: 10 }}>
+      <BarChart data={chartData} layout="vertical" margin={CHART_MARGIN}>
         <XAxis type="number" domain={[0, maxValue * 1.1]} tickFormatter={(v) => formatCurrency(v)} stroke="#6b7280" />
-        <YAxis type="category" dataKey="name" width={90} stroke="#6b7280" />
+        <YAxis type="category" dataKey="name" width={Y_AXIS_WIDTH} stroke="#6b7280" />
         <Tooltip
           formatter={(value) => formatCurrency(value)}
-          contentStyle={{ backgroundColor: '#222228', border: '1px solid #333', borderRadius: 8 }}
-          labelStyle={{ color: '#E8E4DD' }}
+          {...chartTooltipProps(CHART_MARGIN.left + Y_AXIS_WIDTH)}
           itemStyle={{ color: '#E8E4DD' }}
         />
         <Bar dataKey="amount" radius={[0, 6, 6, 0]} barSize={24}>
