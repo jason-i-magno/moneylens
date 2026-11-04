@@ -2,7 +2,7 @@ import { useState, useMemo, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { formatCurrency } from '../constants/categories';
 import { chartTooltipProps } from '../constants/chartTooltip';
-import { generateAmortization, buildActualTimeline, extrapolateFromBalance, loanServicers, servicerOn } from '../utils/mortgageCalculations';
+import { generateAmortization, buildActualTimeline, extrapolateFromBalance, amortizationRows, loanServicers, servicerOn } from '../utils/mortgageCalculations';
 import Modal from '../components/Modal';
 import FileDropZone from '../components/FileDropZone';
 import EmptyState from '../components/EmptyState';
@@ -94,24 +94,39 @@ function BalanceChart({ title, projected, actual, extrapolated, refiDate }) {
 }
 
 // ─── Amortization Table ───
-function AmortizationTable({ title, schedule, actualPayments, isActive }) {
+const money = (value) => (value == null ? '-' : formatCurrency(value));
+const rowClass = (row) => (row.hasActual ? 'has-actual' : row.hasTrajectory ? 'has-trajectory' : '');
+const TRAJECTORY_HINT = 'New Trajectory: minimum payments from the latest actual balance';
+
+// Projected, actual and (when there is one) new trajectory columns, shared by both amortization tables
+function AmortColumnHeads({ showTrajectory }) {
+  return (
+    <>
+      <th>Proj P</th><th>Proj I</th><th>Proj Bal</th><th>Actual P</th><th>Actual I</th><th>Actual Bal</th>
+      {showTrajectory && <><th title={TRAJECTORY_HINT}>Traj P</th><th title={TRAJECTORY_HINT}>Traj I</th><th title={TRAJECTORY_HINT}>Traj Bal</th></>}
+    </>
+  );
+}
+
+function AmortCells({ row, showTrajectory }) {
+  return (
+    <>
+      <td>{money(row.principal)}</td>
+      <td>{money(row.interest)}</td>
+      <td>{money(row.balance)}</td>
+      <td>{money(row.actualPrincipal)}</td>
+      <td>{money(row.actualInterest)}</td>
+      <td>{money(row.actualBalance)}</td>
+      {showTrajectory && <><td>{money(row.trajectoryPrincipal)}</td><td>{money(row.trajectoryInterest)}</td><td>{money(row.trajectoryBalance)}</td></>}
+    </>
+  );
+}
+
+function AmortizationTable({ title, schedule, actualPayments, trajectory, isActive }) {
   const [showAll, setShowAll] = useState(false);
 
-  const rows = useMemo(() => {
-    const actualMap = {};
-    actualPayments.forEach((p) => { actualMap[p.forMonth] = p; });
-    return schedule.map((row) => {
-      const actual = actualMap[row.date];
-      return {
-        ...row,
-        actualPrincipal: actual ? actual.principal + actual.extraPrincipal : null,
-        actualInterest: actual ? actual.interest : null,
-        actualBalance: actual ? actual.balanceAfter : null,
-        hasActual: !!actual,
-      };
-    });
-  }, [schedule, actualPayments]);
-
+  const rows = useMemo(() => amortizationRows(schedule, actualPayments, trajectory || []), [schedule, actualPayments, trajectory]);
+  const showTrajectory = rows.some((r) => r.hasTrajectory);
   const displayRows = showAll ? rows : rows.slice(0, 24);
 
   return (
@@ -123,19 +138,14 @@ function AmortizationTable({ title, schedule, actualPayments, isActive }) {
       <div className="amort-table-wrap">
         <table className="amort-table">
           <thead>
-            <tr><th>#</th><th>Date</th><th>Proj P</th><th>Proj I</th><th>Proj Bal</th><th>Actual P</th><th>Actual I</th><th>Actual Bal</th></tr>
+            <tr><th>#</th><th>Date</th><AmortColumnHeads showTrajectory={showTrajectory} /></tr>
           </thead>
           <tbody>
             {displayRows.map((row) => (
-              <tr key={row.paymentNumber} className={row.hasActual ? 'has-actual' : ''}>
+              <tr key={row.paymentNumber} className={rowClass(row)}>
                 <td>{row.paymentNumber}</td>
                 <td>{row.date}</td>
-                <td>{formatCurrency(row.principal)}</td>
-                <td>{formatCurrency(row.interest)}</td>
-                <td>{formatCurrency(row.balance)}</td>
-                <td>{row.actualPrincipal !== null ? formatCurrency(row.actualPrincipal) : '-'}</td>
-                <td>{row.actualInterest !== null ? formatCurrency(row.actualInterest) : '-'}</td>
-                <td>{row.actualBalance !== null ? formatCurrency(row.actualBalance) : '-'}</td>
+                <AmortCells row={row} showTrajectory={showTrajectory} />
               </tr>
             ))}
           </tbody>
@@ -153,6 +163,7 @@ function AmortizationTable({ title, schedule, actualPayments, isActive }) {
 // ─── Combined Amortization Table ───
 function CombinedAmortTable({ rows }) {
   const [showAll, setShowAll] = useState(false);
+  const showTrajectory = rows.some((r) => r.hasTrajectory);
   const displayRows = showAll ? rows : rows.slice(0, 36);
 
   return (
@@ -161,20 +172,15 @@ function CombinedAmortTable({ rows }) {
       <div className="amort-table-wrap">
         <table className="amort-table">
           <thead>
-            <tr><th>#</th><th>Date</th><th>Loan</th><th>Proj P</th><th>Proj I</th><th>Proj Bal</th><th>Actual P</th><th>Actual I</th><th>Actual Bal</th></tr>
+            <tr><th>#</th><th>Date</th><th>Loan</th><AmortColumnHeads showTrajectory={showTrajectory} /></tr>
           </thead>
           <tbody>
             {displayRows.map((row) => (
-              <tr key={`${row.date}-${row.loanLabel}`} className={row.hasActual ? 'has-actual' : ''}>
+              <tr key={`${row.date}-${row.loanLabel}`} className={rowClass(row)}>
                 <td>{row.paymentNumber}</td>
                 <td>{row.date}</td>
                 <td className="desc-cell">{row.loanLabel}</td>
-                <td>{formatCurrency(row.principal)}</td>
-                <td>{formatCurrency(row.interest)}</td>
-                <td>{formatCurrency(row.balance)}</td>
-                <td>{row.actualPrincipal !== null ? formatCurrency(row.actualPrincipal) : '-'}</td>
-                <td>{row.actualInterest !== null ? formatCurrency(row.actualInterest) : '-'}</td>
-                <td>{row.actualBalance !== null ? formatCurrency(row.actualBalance) : '-'}</td>
+                <AmortCells row={row} showTrajectory={showTrajectory} />
               </tr>
             ))}
           </tbody>
@@ -432,18 +438,19 @@ export default function Mortgage({ data, finance }) {
       const actualTimeline = buildActualTimeline(loanPayments, loan.loanAmount, startMonth);
 
       // Extrapolate from last actual balance forward using minimum payments
+      let trajectory = null;
       let extrapolatedTimeline = null;
       if (loanPayments.length > 0 && loan.status === 'active') {
         const sorted = [...loanPayments].sort((a, b) => b.forMonth.localeCompare(a.forMonth));
         const lastBalance = sorted[0].balanceAfter;
         const lastMonth = sorted[0].forMonth;
         // Start extrapolation from the month after the last actual payment
-        const ext = extrapolateFromBalance(lastBalance, loan.interestRate, loan.monthlyPI, addMonths(lastMonth, 1));
+        trajectory = extrapolateFromBalance(lastBalance, loan.interestRate, loan.monthlyPI, addMonths(lastMonth, 1));
         // Prepend the last actual point so the line connects
-        extrapolatedTimeline = [{ date: lastMonth, balance: lastBalance }, ...ext];
+        extrapolatedTimeline = [{ date: lastMonth, balance: lastBalance }, ...trajectory];
       }
 
-      result[loan.id] = { schedule, loanPayments, projectedTimeline, actualTimeline, extrapolatedTimeline };
+      result[loan.id] = { schedule, loanPayments, projectedTimeline, actualTimeline, trajectory, extrapolatedTimeline };
     }
     return result;
   }, [loans, payments]);
@@ -586,27 +593,13 @@ export default function Mortgage({ data, finance }) {
     for (const loan of sortedLoans) {
       const ld = loanData[loan.id];
       if (!ld) continue;
-      const actualMap = {};
-      ld.loanPayments.forEach((p) => { actualMap[p.forMonth] = p; });
+      const loanLabel = loan.label.split('(')[0].trim();
 
-      for (const row of ld.schedule) {
+      for (const row of amortizationRows(ld.schedule, ld.loanPayments, ld.trajectory || [])) {
         // For paid-off loans, stop at payoff month
         if (loan.status === 'paid_off' && loan.payoffDate && row.date >= loan.payoffDate.slice(0, 7)) break;
-
         paymentNum++;
-        const actual = actualMap[row.date];
-        rows.push({
-          paymentNumber: paymentNum,
-          date: row.date,
-          loanLabel: loan.label.split('(')[0].trim(),
-          principal: row.principal,
-          interest: row.interest,
-          balance: row.balance,
-          actualPrincipal: actual ? actual.principal + actual.extraPrincipal : null,
-          actualInterest: actual ? actual.interest : null,
-          actualBalance: actual ? actual.balanceAfter : null,
-          hasActual: !!actual,
-        });
+        rows.push({ ...row, paymentNumber: paymentNum, loanLabel });
       }
     }
     return rows;
@@ -837,6 +830,7 @@ export default function Mortgage({ data, finance }) {
               title={`${loan.label} Amortization`}
               schedule={ld.schedule}
               actualPayments={ld.loanPayments}
+              trajectory={ld.trajectory}
               isActive={loan.status === 'active'}
             />
           </div>

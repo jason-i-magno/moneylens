@@ -49,10 +49,39 @@ export function extrapolateFromBalance(currentBalance, annualRate, monthlyPaymen
     balance = Math.round((balance - principal) * 100) / 100;
     if (balance < 0) balance = 0;
 
-    timeline.push({ date: dateStr, balance });
+    timeline.push({ date: dateStr, principal, interest, balance });
   }
 
   return timeline;
+}
+
+// The amortization table's rows, one per installment month: the original schedule, the actual payment for
+// that month (by `forMonth`; principal includes extra principal), and the new trajectory (`extrapolateFromBalance`).
+// Trajectory months past the original maturity (a loan behind schedule) are added at the end without
+// scheduled values.
+export function amortizationRows(schedule, payments, trajectory = []) {
+  const actualByMonth = new Map(payments.map((p) => [p.forMonth, p]));
+  const trajectoryByMonth = new Map(trajectory.map((t) => [t.date, t]));
+  const lastScheduled = schedule.at(-1)?.date ?? '';
+  const beyond = trajectory
+    .filter((t) => t.date > lastScheduled)
+    .map((t, i) => ({ paymentNumber: schedule.length + i + 1, date: t.date, principal: null, interest: null, balance: null }));
+
+  return [...schedule, ...beyond].map((row) => {
+    const actual = actualByMonth.get(row.date);
+    const next = trajectoryByMonth.get(row.date);
+    return {
+      ...row,
+      actualPrincipal: actual ? actual.principal + (actual.extraPrincipal || 0) : null,
+      actualInterest: actual ? actual.interest : null,
+      actualBalance: actual ? actual.balanceAfter : null,
+      hasActual: !!actual,
+      trajectoryPrincipal: next ? next.principal : null,
+      trajectoryInterest: next ? next.interest : null,
+      trajectoryBalance: next ? next.balance : null,
+      hasTrajectory: !!next,
+    };
+  });
 }
 
 export function buildActualTimeline(payments, startBalance, startDate) {

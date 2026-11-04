@@ -211,6 +211,7 @@ button, select, input, textarea { font-family: inherit; }
 .amort-table th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); color: var(--text-muted); font-weight: 600; white-space: nowrap; }
 .amort-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
 .amort-table tr.has-actual td { background: #7CE8A308; }
+.amort-table tr.has-trajectory td { background: color-mix(in srgb, var(--accent-coral) 4%, transparent); }
 
 /* === Category Filters === */
 .category-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }

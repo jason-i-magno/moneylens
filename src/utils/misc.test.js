@@ -4,7 +4,7 @@ import { addDays, addMonths, daysBetween, todayISO, getMonthOptions } from './da
 import { detectDateFormat, parseDate } from './csvParser';
 import { findDuplicates } from './duplicateDetector';
 import { makeId } from './ids';
-import { generateAmortization, loanServicers, servicerOn } from './mortgageCalculations';
+import { generateAmortization, extrapolateFromBalance, amortizationRows, loanServicers, servicerOn } from './mortgageCalculations';
 
 describe('income and spending rules', () => {
   const paycheck = { type: 'credit', category: 'other', amount: 3000 };
@@ -105,6 +105,42 @@ describe('generateAmortization', () => {
     expect(schedule.map((r) => r.date)).toEqual(['2023-12', '2024-01', '2024-02', '2024-03', '2024-04', '2024-05', '2024-06', '2024-07', '2024-08', '2024-09', '2024-10', '2024-11']);
     expect(schedule[0]).toMatchObject({ paymentNumber: 1, interest: 120, principal: 946.19, balance: 11053.81 });
     expect(schedule.at(-1).balance).toBe(0);
+  });
+});
+
+describe('amortizationRows', () => {
+  it('lines up the schedule, the actual payments and the new trajectory by month', () => {
+    // Same 1-year loan; the first payment had 1000 of extra principal, so minimum payments finish it early
+    const schedule = generateAmortization(12000, 12, 1, '2023-11-01');
+    const payments = [{ forMonth: '2023-12', principal: 946.19, extraPrincipal: 1000, interest: 120, balanceAfter: 10053.81 }];
+    const trajectory = extrapolateFromBalance(10053.81, 12, 1066.19, '2024-01');
+    expect(trajectory[0]).toEqual({ date: '2024-01', principal: 965.65, interest: 100.54, balance: 9088.16 });
+
+    const rows = amortizationRows(schedule, payments, trajectory);
+    expect(rows).toHaveLength(12);
+    expect(rows[0]).toMatchObject({ date: '2023-12', balance: 11053.81, actualPrincipal: 1946.19, actualBalance: 10053.81, hasActual: true, trajectoryBalance: null, hasTrajectory: false });
+    expect(rows[1]).toMatchObject({ date: '2024-01', hasActual: false, trajectoryPrincipal: 965.65, trajectoryInterest: 100.54, trajectoryBalance: 9088.16, hasTrajectory: true });
+    const lastTrajectory = rows.findLast((r) => r.hasTrajectory);
+    expect(lastTrajectory.trajectoryBalance).toBe(0);
+    expect(lastTrajectory.date < '2024-11').toBe(true);
+    expect(rows.at(-1)).toMatchObject({ date: '2024-11', balance: 0, trajectoryBalance: null });
+  });
+
+  it('adds trajectory months past the original maturity for a loan behind schedule', () => {
+    const schedule = [
+      { paymentNumber: 1, date: '2023-01', principal: 10, interest: 1, balance: 90 },
+      { paymentNumber: 2, date: '2023-02', principal: 10, interest: 1, balance: 80 },
+    ];
+    const rows = amortizationRows(schedule, [{ forMonth: '2023-01', principal: 5, interest: 1, balanceAfter: 95 }], [
+      { date: '2023-02', principal: 5, interest: 1, balance: 90 },
+      { date: '2023-03', principal: 5, interest: 1, balance: 85 },
+    ]);
+    expect(rows.map((r) => [r.paymentNumber, r.date, r.balance, r.actualPrincipal, r.trajectoryBalance])).toEqual([
+      [1, '2023-01', 90, 5, null],
+      [2, '2023-02', 80, null, 90],
+      [3, '2023-03', null, null, 85],
+    ]);
+    expect(amortizationRows(schedule, [])).toHaveLength(2); // no trajectory (a paid-off loan)
   });
 });
 
