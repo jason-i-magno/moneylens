@@ -31,6 +31,12 @@ export function formatMonth(monthStr) {
   return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
+// Number of days in a 'YYYY-MM' month
+export function daysInMonth(monthStr) {
+  const [y, m] = monthStr.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
 export function addMonths(monthStr, months) {
   const [y, m] = monthStr.split('-').map(Number);
   const date = new Date(y, m - 1 + months, 1);

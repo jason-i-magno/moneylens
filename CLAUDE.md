@@ -72,7 +72,7 @@ All rules live in `src/utils/transactions.js` — use these helpers, never re-im
 | `/spending` | Spending | Debits by month with category and subscription filters; add/edit/delete; header total excludes transfers unless the Transfers filter is selected |
 | `/income` | Income | Credits by month; edit/delete; header splits income from transfers-in (not counted) |
 | `/trends` | Trends | Spending by category, income by category and net (income / spending / net), each with series toggles, monthly or daily; each period's own total as bars, or the running total (Cumulative) as lines. Builders in `src/utils/trends.js` |
-| `/budgets` | Budgets | Monthly cap per category with progress bars (red when over); shows categories with a budget or spending |
+| `/budgets` | Budgets | Monthly cap per spending category (not Transfers) for any month (month picker): totals (budgeted, spent in budgeted categories, left or over, spending without a budget), each category's amount left or over, and this month's pace (cards and a marker on each bar where an even pace would be by today). Each category shows its average over the last 6 full months, which the Set Budget form offers as the amount. Helpers in `src/utils/budgets.js` |
 | `/mortgage` | Mortgage | Properties, loans, payments; amortization vs. actual and the new trajectory; extra-payment impact and calculator; combined view across a refi; statement PDF import; JSON import/export; delete payments/loans/properties |
 | `/net-worth` | Net Worth | Accounts (assets/liabilities) with balance snapshots; live balances for accounts linked to a bank profile; mortgage loans and properties included automatically; US Bank statement PDF import |
 | `/import` | Import | CSV import wizard (below) |
@@ -343,6 +343,7 @@ moneylens/
     │   ├── ids.js                 # makeId
     │   ├── subscriptions.js       # getMonthlyAmount
     │   ├── trends.js              # Per-period and cumulative totals for the Trends charts
+    │   ├── budgets.js             # Month spending, budget totals, month progress (pace), average monthly spending
     │   └── *.test.js              # Vitest unit tests
     ├── components/
     │   ├── Layout.jsx             # Header, nav, Suspense around routes
@@ -354,8 +355,8 @@ moneylens/
     │   ├── MonthSelect.jsx        # Month picker in the Spending and Income headers
     │   ├── SubscriptionCard.jsx
     │   ├── CategoryChart.jsx
-    │   ├── MiniBar.jsx
-    │   ├── SummaryCard.jsx
+    │   ├── MiniBar.jsx            # Budget progress bar, with an optional pace marker
+    │   ├── SummaryCard.jsx        # Label + value card (optional tone and note)
     │   ├── EmptyState.jsx
     │   ├── FileDropZone.jsx
     │   ├── ColumnMapper.jsx

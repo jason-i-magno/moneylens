@@ -50,6 +50,9 @@ button, select, input, textarea { font-family: inherit; }
 .summary-card.accent { background: linear-gradient(135deg, color-mix(in srgb, var(--accent-coral) 13%, transparent), color-mix(in srgb, var(--accent-purple) 13%, transparent)); }
 .summary-label { display: block; color: var(--text-muted); font-size: 0.8rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
 .summary-value { font-size: 1.5rem; font-weight: 700; }
+.summary-value.good { color: #7CE8A3; }
+.summary-value.bad { color: var(--danger); }
+.summary-note { display: block; margin-top: 4px; font-size: 0.8rem; color: var(--text-muted); }
 
 /* === Chart Tooltips (chartTooltipProps) === */
 /* On a narrow chart a row wraps (the value moves under its name first), but an amount never breaks */
@@ -127,9 +130,10 @@ button, select, input, textarea { font-family: inherit; }
 .form-inline input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: var(--radius-sm); font-size: 0.9rem; }
 
 /* === MiniBar === */
-.mini-bar { width: 100%; }
+.mini-bar { width: 100%; position: relative; }
 .mini-bar-track { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
 .mini-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+.mini-bar-marker { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); opacity: 0.55; }
 
 /* === Budget Row === */
 .budget-row { display: flex; align-items: center; gap: 16px; padding: 16px; background: var(--card); border-radius: var(--radius); margin-bottom: 8px; cursor: pointer; transition: background 0.2s; }
@@ -137,7 +141,13 @@ button, select, input, textarea { font-family: inherit; }
 .budget-label { display: flex; align-items: center; gap: 8px; min-width: 140px; font-weight: 500; }
 .budget-icon { font-size: 1.2rem; }
 .budget-bar-wrap { flex: 1; }
-.budget-amounts { font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; display: block; }
+.budget-name { display: block; }
+.budget-average { display: block; font-size: 0.75rem; font-weight: 400; color: var(--text-muted); }
+.budget-amounts-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.budget-amounts { font-size: 0.8rem; color: var(--text-muted); }
+.budget-left { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; }
+.budget-left.over { color: var(--danger); font-weight: 600; }
+.budget-suggestion { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .budget-amounts.over { color: var(--danger); font-weight: 600; }
 
 /* === Drop Zone === */
@@ -288,4 +298,6 @@ input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; marg
   .summary-grid { grid-template-columns: 1fr; }
   .mapper-row { flex-direction: column; align-items: flex-start; }
   .mapper-row label { min-width: auto; }
+  .budget-row { flex-wrap: wrap; gap: 10px 16px; }
+  .budget-bar-wrap { flex-basis: 100%; }
 }
