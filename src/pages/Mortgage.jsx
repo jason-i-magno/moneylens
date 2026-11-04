@@ -2,12 +2,15 @@ import { useState, useMemo, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { formatCurrency } from '../constants/categories';
 import { chartTooltipProps } from '../constants/chartTooltip';
-import { generateAmortization, buildActualTimeline, extrapolateFromBalance, amortizationRows, loanServicers, servicerOn } from '../utils/mortgageCalculations';
+import {
+  generateAmortization, buildActualTimeline, extrapolateFromBalance, amortizationRows, trajectoryStart, compareExtraPayments,
+  averageExtraPrincipal, loanServicers, servicerOn,
+} from '../utils/mortgageCalculations';
 import Modal from '../components/Modal';
 import FileDropZone from '../components/FileDropZone';
 import EmptyState from '../components/EmptyState';
 import ConfirmButton from '../components/ConfirmButton';
-import { addMonths, todayISO } from '../utils/dates';
+import { addMonths, formatMonth, todayISO } from '../utils/dates';
 import { parseKeywordList } from '../utils/categorizer';
 
 // Statement formats the PDF import can read
@@ -21,7 +24,7 @@ const servicerName = (s) => s.servicer || SERVICER_TYPES.find((t) => t.id === s.
 // ─── Balance chart setup (per-loan and combined) ───
 const CHART_MARGIN = { left: 10, right: 20, top: 10, bottom: 10 };
 const Y_AXIS_WIDTH = 100;
-const BALANCE_LABELS = { projected: 'Projected (Original Min)', actual: 'Actual Balance', extrapolated: 'New Trajectory (Min)' };
+const BALANCE_LABELS = { projected: 'Projected (Original Min)', actual: 'Actual Balance', extrapolated: 'New Trajectory (Min)', withExtra: 'With Extra Payments' };
 const BALANCE_TOOLTIP = {
   formatter: (value, name) => [formatCurrency(value), BALANCE_LABELS[name] || name],
   ...chartTooltipProps(CHART_MARGIN.left + Y_AXIS_WIDTH),
@@ -63,7 +66,7 @@ function LoanSummary({ loan, onEdit }) {
 }
 
 // ─── Balance Chart ───
-function BalanceChart({ title, projected, actual, extrapolated, refiDate }) {
+function BalanceChart({ title, projected, actual, extrapolated, withExtra, refiDate }) {
   const data = useMemo(() => {
     const map = {};
     projected.forEach((p) => { map[p.date] = { date: p.date, projected: p.balance }; });
@@ -71,8 +74,11 @@ function BalanceChart({ title, projected, actual, extrapolated, refiDate }) {
     if (extrapolated) {
       extrapolated.forEach((e) => { map[e.date] = { ...map[e.date], date: e.date, extrapolated: e.balance }; });
     }
+    if (withExtra) {
+      withExtra.forEach((e) => { map[e.date] = { ...map[e.date], date: e.date, withExtra: e.balance }; });
+    }
     return Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
-  }, [projected, actual, extrapolated]);
+  }, [projected, actual, extrapolated, withExtra]);
 
   return (
     <div className="card">
@@ -87,8 +93,120 @@ function BalanceChart({ title, projected, actual, extrapolated, refiDate }) {
           <Line type="monotone" dataKey="projected" name="projected" stroke="#6b7280" strokeWidth={2} strokeDasharray="6 3" dot={false} />
           <Line type="monotone" dataKey="actual" name="actual" stroke="#7CE8A3" strokeWidth={2.5} dot={false} connectNulls />
           {extrapolated && <Line type="monotone" dataKey="extrapolated" name="extrapolated" stroke="#E8927C" strokeWidth={2} strokeDasharray="4 2" dot={false} />}
+          {withExtra && <Line type="monotone" dataKey="withExtra" name="withExtra" stroke={EXTRA_LINE_COLOR} strokeWidth={2} strokeDasharray="4 2" dot={false} />}
         </LineChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ─── Extra Payment Calculator ───
+const EXTRA_LINE_COLOR = '#7CB5E8';
+const toAmount = (text) => Math.max(0, parseFloat(text) || 0);
+const formatSpan = (months) => {
+  if (months <= 0) return '-';
+  const years = Math.floor(months / 12);
+  return `${years > 0 ? `${years}y ` : ''}${months % 12}mo`;
+};
+const payoffLabel = (side) => (side.payoffMonth ? formatMonth(side.payoffMonth) : 'Over 30 years');
+
+const NO_EXTRA = { monthly: '', oneTime: '', oneTimeMonth: '' };
+
+// The calculator's comparison for the typed-in amounts, plus the With Extra Payments timeline (for the
+// amortization tables) and chart line (joined to the latest balance) when the amounts change anything
+function planExtraPayments(loan, payments, inputs) {
+  const oneTimeAmount = toAmount(inputs.oneTime);
+  const oneTime = oneTimeAmount > 0
+    ? { month: inputs.oneTimeMonth || trajectoryStart(loan, payments).month, amount: oneTimeAmount }
+    : null;
+  const comparison = compareExtraPayments(loan, payments, { extraMonthly: toAmount(inputs.monthly), oneTime });
+  const changed = comparison.interestSaved > 0;
+  const { start, withExtra } = comparison;
+  return {
+    inputs,
+    comparison,
+    withExtra: changed ? withExtra.timeline : null,
+    chartTimeline: changed ? [{ date: addMonths(start.month, -1), balance: start.balance }, ...withExtra.timeline] : null,
+  };
+}
+
+// What-if inputs and results; nothing here is saved
+function ExtraPaymentCard({ title = 'Extra Payment Calculator', loan, payments, plan, onChange }) {
+  const { inputs, comparison: { start, base, withExtra, monthsSaved, interestSaved } } = plan;
+  const set = (key) => (e) => onChange({ ...inputs, [key]: e.target.value });
+  const months = Array.from({ length: base.months }, (_, i) => addMonths(start.month, i));
+  const hasExtra = toAmount(inputs.monthly) > 0 || toAmount(inputs.oneTime) > 0;
+  const recentExtra = averageExtraPrincipal(payments);
+  const recentCount = Math.min(6, payments.length);
+
+  return (
+    <div className="card">
+      <h3>{title}</h3>
+      <p className="muted extra-calc-intro">
+        Starts from the latest balance, {formatCurrency(start.balance)}, paying the {formatCurrency(loan.monthlyPI)} monthly
+        principal and interest from {formatMonth(start.month)} on. Extra payments go entirely to principal.
+      </p>
+      <div className="extra-calc-inputs">
+        <div className="form-group">
+          <label htmlFor="extra-monthly">Extra Each Month</label>
+          <input id="extra-monthly" className="amount-input" type="number" min="0" step="any" inputMode="decimal" placeholder="0" value={inputs.monthly} onChange={set('monthly')} />
+        </div>
+        <div className="form-group">
+          <label htmlFor="extra-once">One-Time Extra</label>
+          <input id="extra-once" className="amount-input" type="number" min="0" step="any" inputMode="decimal" placeholder="0" value={inputs.oneTime} onChange={set('oneTime')} />
+        </div>
+        <div className="form-group">
+          <label htmlFor="extra-once-month">One-Time Extra In</label>
+          <select id="extra-once-month" className="select-chevron" value={inputs.oneTimeMonth || start.month} onChange={set('oneTimeMonth')}>
+            {months.map((m) => <option key={m} value={m}>{formatMonth(m)}</option>)}
+          </select>
+        </div>
+      </div>
+      {recentExtra > 0 && (
+        <button className="btn-secondary extra-calc-recent" onClick={() => onChange({ ...inputs, monthly: String(recentExtra) })}>
+          Use the average of your last {recentCount === 1 ? 'statement' : `${recentCount} statements`}: {formatCurrency(recentExtra)} a month
+        </button>
+      )}
+      <div className="mortgage-grid">
+        <div>
+          <span className="label">Payoff</span>
+          <span className="value">{payoffLabel(withExtra)}</span>
+          {hasExtra && <span className="compare">{payoffLabel(base)} with the minimum</span>}
+        </div>
+        <div><span className="label">Time Saved</span><span className="value savings">{formatSpan(monthsSaved)}</span></div>
+        <div>
+          <span className="label">Interest From Now On</span>
+          <span className="value">{formatCurrency(withExtra.interest)}</span>
+          {hasExtra && <span className="compare">{formatCurrency(base.interest)} with the minimum</span>}
+        </div>
+        <div><span className="label">Interest Saved</span><span className="value savings">{interestSaved > 0 ? formatCurrency(interestSaved) : '-'}</span></div>
+        <div><span className="label">Monthly P&amp;I + Extra</span><span className="value">{formatCurrency(loan.monthlyPI + toAmount(inputs.monthly))}</span></div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Loan Tab ───
+// The loan's chart, the extra payment calculator (active loans: `plan`) and its amortization table
+function LoanTab({ loan, ld, plan, onExtraChange }) {
+  return (
+    <div>
+      <BalanceChart
+        title={`${loan.label} — Balance Over Time`}
+        projected={ld.projectedTimeline}
+        actual={ld.actualTimeline}
+        extrapolated={ld.extrapolatedTimeline}
+        withExtra={plan?.chartTimeline}
+      />
+      {plan && <ExtraPaymentCard loan={loan} payments={ld.loanPayments} plan={plan} onChange={onExtraChange} />}
+      <AmortizationTable
+        title={`${loan.label} Amortization`}
+        schedule={ld.schedule}
+        actualPayments={ld.loanPayments}
+        trajectory={ld.trajectory}
+        withExtra={plan?.withExtra}
+        isActive={loan.status === 'active'}
+      />
     </div>
   );
 }
@@ -97,18 +215,23 @@ function BalanceChart({ title, projected, actual, extrapolated, refiDate }) {
 const money = (value) => (value == null ? '-' : formatCurrency(value));
 const rowClass = (row) => (row.hasActual ? 'has-actual' : row.hasTrajectory ? 'has-trajectory' : '');
 const TRAJECTORY_HINT = 'New Trajectory: minimum payments from the latest actual balance';
+const WITH_EXTRA_HINT = 'With Extra Payments: the minimum plus the Extra Payment Calculator amounts';
 
-// Projected, actual and (when there is one) new trajectory columns, shared by both amortization tables
-function AmortColumnHeads({ showTrajectory }) {
+// Which optional column groups a table's rows need
+const optionalColumns = (rows) => ({ trajectory: rows.some((r) => r.hasTrajectory), withExtra: rows.some((r) => r.hasWithExtra) });
+
+// Projected, actual and (when there is one) new trajectory and with-extra columns, shared by both amortization tables
+function AmortColumnHeads({ show }) {
   return (
     <>
       <th>Proj P</th><th>Proj I</th><th>Proj Bal</th><th>Actual P</th><th>Actual I</th><th>Actual Bal</th>
-      {showTrajectory && <><th title={TRAJECTORY_HINT}>Traj P</th><th title={TRAJECTORY_HINT}>Traj I</th><th title={TRAJECTORY_HINT}>Traj Bal</th></>}
+      {show.trajectory && <><th title={TRAJECTORY_HINT}>Traj P</th><th title={TRAJECTORY_HINT}>Traj I</th><th title={TRAJECTORY_HINT}>Traj Bal</th></>}
+      {show.withExtra && <><th title={WITH_EXTRA_HINT}>With Extra P</th><th title={WITH_EXTRA_HINT}>With Extra I</th><th title={WITH_EXTRA_HINT}>With Extra Bal</th></>}
     </>
   );
 }
 
-function AmortCells({ row, showTrajectory }) {
+function AmortCells({ row, show }) {
   return (
     <>
       <td>{money(row.principal)}</td>
@@ -117,16 +240,20 @@ function AmortCells({ row, showTrajectory }) {
       <td>{money(row.actualPrincipal)}</td>
       <td>{money(row.actualInterest)}</td>
       <td>{money(row.actualBalance)}</td>
-      {showTrajectory && <><td>{money(row.trajectoryPrincipal)}</td><td>{money(row.trajectoryInterest)}</td><td>{money(row.trajectoryBalance)}</td></>}
+      {show.trajectory && <><td>{money(row.trajectoryPrincipal)}</td><td>{money(row.trajectoryInterest)}</td><td>{money(row.trajectoryBalance)}</td></>}
+      {show.withExtra && <><td>{money(row.withExtraPrincipal)}</td><td>{money(row.withExtraInterest)}</td><td>{money(row.withExtraBalance)}</td></>}
     </>
   );
 }
 
-function AmortizationTable({ title, schedule, actualPayments, trajectory, isActive }) {
+function AmortizationTable({ title, schedule, actualPayments, trajectory, withExtra, isActive }) {
   const [showAll, setShowAll] = useState(false);
 
-  const rows = useMemo(() => amortizationRows(schedule, actualPayments, trajectory || []), [schedule, actualPayments, trajectory]);
-  const showTrajectory = rows.some((r) => r.hasTrajectory);
+  const rows = useMemo(
+    () => amortizationRows(schedule, actualPayments, trajectory || [], withExtra || []),
+    [schedule, actualPayments, trajectory, withExtra],
+  );
+  const show = optionalColumns(rows);
   const displayRows = showAll ? rows : rows.slice(0, 24);
 
   return (
@@ -136,16 +263,16 @@ function AmortizationTable({ title, schedule, actualPayments, trajectory, isActi
         {isActive && <span className="badge-active">Active</span>}
       </div>
       <div className="amort-table-wrap">
-        <table className="amort-table">
+        <table className="amort-table amort-schedule">
           <thead>
-            <tr><th>#</th><th>Date</th><AmortColumnHeads showTrajectory={showTrajectory} /></tr>
+            <tr><th>#</th><th>Date</th><AmortColumnHeads show={show} /></tr>
           </thead>
           <tbody>
             {displayRows.map((row) => (
               <tr key={row.paymentNumber} className={rowClass(row)}>
                 <td>{row.paymentNumber}</td>
                 <td>{row.date}</td>
-                <AmortCells row={row} showTrajectory={showTrajectory} />
+                <AmortCells row={row} show={show} />
               </tr>
             ))}
           </tbody>
@@ -163,16 +290,16 @@ function AmortizationTable({ title, schedule, actualPayments, trajectory, isActi
 // ─── Combined Amortization Table ───
 function CombinedAmortTable({ rows }) {
   const [showAll, setShowAll] = useState(false);
-  const showTrajectory = rows.some((r) => r.hasTrajectory);
+  const show = optionalColumns(rows);
   const displayRows = showAll ? rows : rows.slice(0, 36);
 
   return (
     <div className="card">
       <h3>Combined Amortization</h3>
       <div className="amort-table-wrap">
-        <table className="amort-table">
+        <table className="amort-table amort-schedule">
           <thead>
-            <tr><th>#</th><th>Date</th><th>Loan</th><AmortColumnHeads showTrajectory={showTrajectory} /></tr>
+            <tr><th>#</th><th>Date</th><th>Loan</th><AmortColumnHeads show={show} /></tr>
           </thead>
           <tbody>
             {displayRows.map((row) => (
@@ -180,7 +307,7 @@ function CombinedAmortTable({ rows }) {
                 <td>{row.paymentNumber}</td>
                 <td>{row.date}</td>
                 <td className="desc-cell">{row.loanLabel}</td>
-                <AmortCells row={row} showTrajectory={showTrajectory} />
+                <AmortCells row={row} show={show} />
               </tr>
             ))}
           </tbody>
@@ -441,19 +568,31 @@ export default function Mortgage({ data, finance }) {
       let trajectory = null;
       let extrapolatedTimeline = null;
       if (loanPayments.length > 0 && loan.status === 'active') {
-        const sorted = [...loanPayments].sort((a, b) => b.forMonth.localeCompare(a.forMonth));
-        const lastBalance = sorted[0].balanceAfter;
-        const lastMonth = sorted[0].forMonth;
         // Start extrapolation from the month after the last actual payment
-        trajectory = extrapolateFromBalance(lastBalance, loan.interestRate, loan.monthlyPI, addMonths(lastMonth, 1));
+        const start = trajectoryStart(loan, loanPayments);
+        trajectory = extrapolateFromBalance(start.balance, loan.interestRate, loan.monthlyPI, start.month);
         // Prepend the last actual point so the line connects
-        extrapolatedTimeline = [{ date: lastMonth, balance: lastBalance }, ...trajectory];
+        extrapolatedTimeline = [{ date: addMonths(start.month, -1), balance: start.balance }, ...trajectory];
       }
 
       result[loan.id] = { schedule, loanPayments, projectedTimeline, actualTimeline, trajectory, extrapolatedTimeline };
     }
     return result;
   }, [loans, payments]);
+
+  // Extra Payment Calculator: the typed-in amounts per active loan (a what-if, never saved), shared by the
+  // loan's tab and Combined
+  const [extraInputs, setExtraInputs] = useState({});
+  const extraPlans = useMemo(() => {
+    const plans = {};
+    for (const loan of loans) {
+      if (loan.status !== 'active' || !loanData[loan.id]) continue;
+      plans[loan.id] = planExtraPayments(loan, loanData[loan.id].loanPayments, extraInputs[loan.id] || NO_EXTRA);
+    }
+    return plans;
+  }, [loans, loanData, extraInputs]);
+  const setExtraFor = (loanId) => (inputs) => setExtraInputs((all) => ({ ...all, [loanId]: inputs }));
+  const combinedHasExtra = Object.values(extraPlans).some((plan) => plan.chartTimeline);
 
   // Combined timeline
   const combinedData = useMemo(() => {
@@ -476,9 +615,10 @@ export default function Mortgage({ data, finance }) {
       if (ld.extrapolatedTimeline) {
         ld.extrapolatedTimeline.forEach((e) => { map[e.date] = { ...map[e.date], date: e.date, extrapolated: e.balance }; });
       }
+      extraPlans[loan.id]?.chartTimeline?.forEach((e) => { map[e.date] = { ...map[e.date], date: e.date, withExtra: e.balance }; });
     }
     return Object.values(map).sort((a, b) => a.date.localeCompare(b.date));
-  }, [loans, loanData]);
+  }, [loans, loanData, extraPlans]);
 
   const refiDate = useMemo(() => {
     const refi = loans.find((l) => l.refinancesLoanId);
@@ -595,7 +735,7 @@ export default function Mortgage({ data, finance }) {
       if (!ld) continue;
       const loanLabel = loan.label.split('(')[0].trim();
 
-      for (const row of amortizationRows(ld.schedule, ld.loanPayments, ld.trajectory || [])) {
+      for (const row of amortizationRows(ld.schedule, ld.loanPayments, ld.trajectory || [], extraPlans[loan.id]?.withExtra || [])) {
         // For paid-off loans, stop at payoff month
         if (loan.status === 'paid_off' && loan.payoffDate && row.date >= loan.payoffDate.slice(0, 7)) break;
         paymentNum++;
@@ -603,7 +743,7 @@ export default function Mortgage({ data, finance }) {
       }
     }
     return rows;
-  }, [loans, loanData]);
+  }, [loans, loanData, extraPlans]);
 
   // ─── Handlers ───
   const handleSaveLoan = (loanForm) => {
@@ -818,23 +958,7 @@ export default function Mortgage({ data, finance }) {
         if (activeTab !== loan.id) return null;
         const ld = loanData[loan.id];
         if (!ld) return null;
-        return (
-          <div key={loan.id}>
-            <BalanceChart
-              title={`${loan.label} — Balance Over Time`}
-              projected={ld.projectedTimeline}
-              actual={ld.actualTimeline}
-              extrapolated={ld.extrapolatedTimeline}
-            />
-            <AmortizationTable
-              title={`${loan.label} Amortization`}
-              schedule={ld.schedule}
-              actualPayments={ld.loanPayments}
-              trajectory={ld.trajectory}
-              isActive={loan.status === 'active'}
-            />
-          </div>
-        );
+        return <LoanTab key={loan.id} loan={loan} ld={ld} plan={extraPlans[loan.id]} onExtraChange={setExtraFor(loan.id)} />;
       })}
 
       {activeTab === 'combined' && loans.length > 1 && (
@@ -851,9 +975,20 @@ export default function Mortgage({ data, finance }) {
               <Line type="monotone" dataKey="projected" name="projected" stroke="#6b7280" strokeWidth={2} strokeDasharray="6 3" dot={false} />
               <Line type="monotone" dataKey="actual" name="actual" stroke="#7CE8A3" strokeWidth={2.5} dot={false} connectNulls />
               <Line type="monotone" dataKey="extrapolated" name="extrapolated" stroke="#E8927C" strokeWidth={2} strokeDasharray="4 2" dot={false} />
+              {combinedHasExtra && <Line type="monotone" dataKey="withExtra" name="withExtra" stroke={EXTRA_LINE_COLOR} strokeWidth={2} strokeDasharray="4 2" dot={false} />}
             </LineChart>
           </ResponsiveContainer>
         </div>
+      )}
+
+      {activeTab === 'combined' && loans.length > 1 && activeLoan && extraPlans[activeLoan.id] && (
+        <ExtraPaymentCard
+          title={`Extra Payment Calculator — ${activeLoan.label.split('(')[0].trim() || activeLoan.label}`}
+          loan={activeLoan}
+          payments={loanData[activeLoan.id].loanPayments}
+          plan={extraPlans[activeLoan.id]}
+          onChange={setExtraFor(activeLoan.id)}
+        />
       )}
 
       {activeTab === 'combined' && combinedSchedule.length > 0 && (

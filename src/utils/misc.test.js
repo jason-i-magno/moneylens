@@ -4,7 +4,10 @@ import { addDays, addMonths, daysBetween, todayISO, getMonthOptions } from './da
 import { detectDateFormat, parseDate } from './csvParser';
 import { findDuplicates } from './duplicateDetector';
 import { makeId } from './ids';
-import { generateAmortization, extrapolateFromBalance, amortizationRows, loanServicers, servicerOn } from './mortgageCalculations';
+import {
+  generateAmortization, extrapolateFromBalance, amortizationRows, trajectoryStart, compareExtraPayments, averageExtraPrincipal,
+  loanServicers, servicerOn,
+} from './mortgageCalculations';
 
 describe('income and spending rules', () => {
   const paycheck = { type: 'credit', category: 'other', amount: 3000 };
@@ -124,6 +127,20 @@ describe('amortizationRows', () => {
     expect(lastTrajectory.trajectoryBalance).toBe(0);
     expect(lastTrajectory.date < '2024-11').toBe(true);
     expect(rows.at(-1)).toMatchObject({ date: '2024-11', balance: 0, trajectoryBalance: null });
+    expect(rows.some((r) => r.hasWithExtra)).toBe(false);
+  });
+
+  it('adds the trajectory with extra payments, which ends sooner', () => {
+    const schedule = generateAmortization(12000, 12, 1, '2023-11-01');
+    const payments = [{ forMonth: '2023-12', principal: 946.19, extraPrincipal: 1000, interest: 120, balanceAfter: 10053.81 }];
+    const trajectory = extrapolateFromBalance(10053.81, 12, 1066.19, '2024-01');
+    const withExtra = extrapolateFromBalance(10053.81, 12, 1066.19, '2024-01', { extraMonthly: 1000 });
+    const rows = amortizationRows(schedule, payments, trajectory, withExtra);
+    expect(rows[0]).toMatchObject({ date: '2023-12', hasActual: true, withExtraBalance: null, hasWithExtra: false });
+    expect(rows[1]).toMatchObject({ date: '2024-01', trajectoryBalance: 9088.16, withExtraPrincipal: 1965.65, withExtraInterest: 100.54, withExtraBalance: 8088.16, hasWithExtra: true });
+    const lastWithExtra = rows.findLast((r) => r.hasWithExtra);
+    expect(lastWithExtra.withExtraBalance).toBe(0);
+    expect(lastWithExtra.date < rows.findLast((r) => r.hasTrajectory).date).toBe(true);
   });
 
   it('adds trajectory months past the original maturity for a loan behind schedule', () => {
@@ -141,6 +158,40 @@ describe('amortizationRows', () => {
       [3, '2023-03', null, null, 85],
     ]);
     expect(amortizationRows(schedule, [])).toHaveLength(2); // no trajectory (a paid-off loan)
+  });
+});
+
+describe('extra payments', () => {
+  // 12000 at 12% a year (1% a month); 1066.19 pays it off in 12 months
+  const loan = { loanAmount: 12000, interestRate: 12, monthlyPI: 1066.19, startDate: '2023-12-01' };
+
+  it('compares minimum payments with extra each month and a one-time extra', () => {
+    const c = compareExtraPayments(loan, [], { extraMonthly: 100, oneTime: { month: '2024-02', amount: 1000 } });
+    expect(c.start).toEqual({ month: '2024-01', balance: 12000 });
+    expect(c.base).toMatchObject({ months: 12, payoffMonth: '2024-12', interest: 794.23 });
+    expect(c.withExtra.timeline.slice(0, 2)).toEqual([
+      { date: '2024-01', principal: 1046.19, interest: 120, balance: 10953.81 },
+      { date: '2024-02', principal: 2056.65, interest: 109.54, balance: 8897.16 },
+    ]);
+    expect(c.withExtra.timeline.at(-1)).toEqual({ date: '2024-10', principal: 1126.6, interest: 11.27, balance: 0 });
+    expect(c.withExtra).toMatchObject({ months: 10, payoffMonth: '2024-10', interest: 633.58 });
+    expect(c).toMatchObject({ monthsSaved: 2, interestSaved: 160.65 });
+    expect(compareExtraPayments(loan, [])).toMatchObject({ monthsSaved: 0, interestSaved: 0 });
+  });
+
+  it('starts from the latest payment, and reports no payoff when the payment never pays it off', () => {
+    const payments = [{ forMonth: '2024-03', balanceAfter: 8000 }, { forMonth: '2024-02', balanceAfter: 9000 }];
+    expect(trajectoryStart(loan, payments)).toEqual({ month: '2024-04', balance: 8000 });
+    expect(compareExtraPayments({ ...loan, monthlyPI: 100 }, []).base).toMatchObject({ months: 360, payoffMonth: null });
+  });
+
+  it('averages the extra principal of the latest payments', () => {
+    const payments = [
+      { forMonth: '2024-03', extraPrincipal: 600 }, { forMonth: '2024-01' }, { forMonth: '2024-02', extraPrincipal: 300 },
+    ];
+    expect(averageExtraPrincipal(payments, 2)).toBe(450);
+    expect(averageExtraPrincipal(payments)).toBe(300);
+    expect(averageExtraPrincipal([])).toBe(0);
   });
 });
 
