@@ -149,15 +149,15 @@ function ExtraPaymentCard({ title = 'Extra Payment Calculator', loan, payments, 
       <div className="extra-calc-inputs">
         <div className="form-group">
           <label htmlFor="extra-monthly">Extra Each Month</label>
-          <input id="extra-monthly" className="amount-input" type="number" min="0" step="any" inputMode="decimal" placeholder="0" value={inputs.monthly} onChange={set('monthly')} />
+          <input id="extra-monthly" type="number" min="0" step="any" inputMode="decimal" placeholder="0" value={inputs.monthly} onChange={set('monthly')} />
         </div>
         <div className="form-group">
           <label htmlFor="extra-once">One-Time Extra</label>
-          <input id="extra-once" className="amount-input" type="number" min="0" step="any" inputMode="decimal" placeholder="0" value={inputs.oneTime} onChange={set('oneTime')} />
+          <input id="extra-once" type="number" min="0" step="any" inputMode="decimal" placeholder="0" value={inputs.oneTime} onChange={set('oneTime')} />
         </div>
         <div className="form-group">
           <label htmlFor="extra-once-month">One-Time Extra In</label>
-          <select id="extra-once-month" className="select-chevron" value={inputs.oneTimeMonth || start.month} onChange={set('oneTimeMonth')}>
+          <select id="extra-once-month" value={inputs.oneTimeMonth || start.month} onChange={set('oneTimeMonth')}>
             {months.map((m) => <option key={m} value={m}>{formatMonth(m)}</option>)}
           </select>
         </div>

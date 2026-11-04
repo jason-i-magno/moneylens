@@ -44,6 +44,7 @@ Run `npm run lint && npm test && npm run build` before calling a change done.
 - **Tone:** Clean, modern, slightly warm. Not corporate. Premium personal tool.
 - **Rounded corners:** 10-14px on cards and buttons
 - **Animations:** subtle transitions on bar charts, tab switches, modal open/close
+- **Form controls:** every `<select>` gets the month picker's chevron (`--chevron`) and a dark open list, and number fields have no spin arrows: one global block near the end of `App.css` (Native Controls, just before Responsive), after the page styles so it layers on top of their padding and background color. Don't restyle them per form.
 - **Translucent colors in CSS:** use `color-mix(in srgb, var(--x) 13%, transparent)`. Appending hex alpha to a variable (`var(--x)22`) is invalid CSS and silently drops the whole declaration. (Appending alpha to a hex *string* in JS, e.g. `cat.color + '22'`, is fine.)
 
 ## How Money Is Counted (read this first)
