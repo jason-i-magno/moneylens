@@ -18,6 +18,21 @@ export function followedTransfers(account, transactions) {
     && (linkedTo(tx) || patterns.some((re) => re.test(`${tx.name} ${tx.merchantName || ''}`))));
 }
 
+// Contributions to an asset that can't be linked (a 401(k), an HSA): every day a paycheck arrives in the
+// user's other accounts (a credit matching one of `paycheckKeywords`, matched like category keywords)
+// adds `paycheckContribution`, the employee's and employer's share together. A paycheck split across
+// several deposits, or a bonus paid with it, still counts once that day. Returns { date, amount }.
+export function paycheckContributions(account, transactions) {
+  const amount = Number(account.paycheckContribution) || 0;
+  const patterns = (account.paycheckKeywords || []).filter((k) => k.trim()).map(keywordRegex);
+  if (account.type !== 'asset' || amount <= 0 || !patterns.length) return [];
+  const dates = new Set(transactions
+    .filter((tx) => tx.type === 'credit' && (!account.linkedBankProfile || tx.importedFrom !== account.linkedBankProfile)
+      && patterns.some((re) => re.test(`${tx.name} ${tx.merchantName || ''}`)))
+    .map((tx) => tx.date));
+  return [...dates].sort().map((date) => ({ date, amount }));
+}
+
 // Assets grow with credits (deposits); liabilities grow with debits (charges)
 export function balanceEffect(tx, accountType) {
   const signed = tx.type === 'credit' ? tx.amount : -tx.amount;
@@ -27,7 +42,8 @@ export function balanceEffect(tx, accountType) {
 // End-of-day balances for an account. Snapshots are anchors; transactions imported from the
 // account's linked bank profile fill in every other day by replaying forward from each anchor
 // and backward from the earliest one. Followed transfers count the other way round: money that
-// left another account for this one raises an asset here or pays down a liability.
+// left another account for this one raises an asset here or pays down a liability. Paycheck
+// contributions raise it on each payday; market changes show only through snapshots.
 export function buildBalanceTimeline(account, snapshots, transactions) {
   const anchors = snapshots
     .filter((s) => s.accountId === account.id)
@@ -42,6 +58,7 @@ export function buildBalanceTimeline(account, snapshots, transactions) {
   const linked = account.linkedBankProfile ? getLinkedTransactions(account.linkedBankProfile, transactions) : [];
   for (const tx of linked) add(tx.date, balanceEffect(tx, account.type));
   for (const tx of followedTransfers(account, transactions)) add(tx.date, -balanceEffect(tx, account.type));
+  for (const c of paycheckContributions(account, transactions)) add(c.date, c.amount);
   const txDates = [...effectByDate.keys()].sort();
 
   // Before the first anchor: undo each day's activity walking backward, ending with the opening

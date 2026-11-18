@@ -9,6 +9,7 @@ import EmptyState from '../components/EmptyState';
 import ConfirmButton from '../components/ConfirmButton';
 import { buildBalanceTimeline, buildNetWorthHistory, loanBalancePoints } from '../utils/netWorth';
 import { parseKeywordList } from '../utils/categorizer';
+import { parseBalanceHistory } from '../utils/csvParser';
 import { plaidSourceOptions } from '../utils/plaidSync';
 import { todayISO } from '../utils/dates';
 
@@ -329,6 +330,9 @@ export default function NetWorth({ data, finance }) {
                         {(acct.transferKeywords?.length > 0 || linkedTransferAccounts.has(acct.id)) && (
                           <span className="tx-badge sub" title={acct.transferKeywords?.length ? `Follows transfers matching: ${acct.transferKeywords.join(', ')}` : 'Follows the transfers linked to it'}>FOLLOWS</span>
                         )}
+                        {acct.type === 'asset' && acct.paycheckKeywords?.length > 0 && acct.paycheckContribution > 0 && (
+                          <span className="tx-badge sub" title={`Adds ${formatCurrency(acct.paycheckContribution)} each payday with a deposit matching: ${acct.paycheckKeywords.join(', ')}`}>PAYCHECKS</span>
+                        )}
                       </span>
                     </div>
                     <div className="nw-account-balance-wrap">
@@ -365,6 +369,10 @@ export default function NetWorth({ data, finance }) {
           onDelete={finance.deleteSnapshot}
         />
         <SnapshotForm account={modal?.account} onSave={handleSaveSnapshot} />
+        <BalanceImport
+          snapshots={nw.snapshots.filter((s) => s.accountId === modal?.account?.id)}
+          onImport={(balances) => finance.importSnapshots(modal.account.id, balances, 'csv_import')}
+        />
       </Modal>
     </div>
   );
@@ -378,7 +386,7 @@ function SnapshotList({ snapshots, onDelete }) {
     <div className="snapshot-list">
       {sorted.map((s) => (
         <div key={s.id} className="profile-row">
-          <span>{s.date} &middot; {formatCurrency(s.balance)}{s.source === 'pdf_import' && <span className="tx-badge">PDF</span>}{s.source === 'plaid' && <span className="tx-badge">SYNC</span>}</span>
+          <span>{s.date} &middot; {formatCurrency(s.balance)}{s.source === 'pdf_import' && <span className="tx-badge">PDF</span>}{s.source === 'plaid' && <span className="tx-badge">SYNC</span>}{s.source === 'csv_import' && <span className="tx-badge">CSV</span>}</span>
           <button className="btn-icon danger" onClick={() => onDelete(s.id)}>Del</button>
         </div>
       ))}
@@ -389,9 +397,20 @@ function SnapshotList({ snapshots, onDelete }) {
 function AccountForm({ account, bankProfiles, onSave }) {
   const [form, setForm] = useState(account || { name: '', type: 'asset', category: 'bank', linkedBankProfile: '' });
   const [keywords, setKeywords] = useState((account?.transferKeywords || []).join(', '));
+  const [paycheckKeywords, setPaycheckKeywords] = useState((account?.paycheckKeywords || []).join(', '));
+  const [contribution, setContribution] = useState(account?.paycheckContribution ?? '');
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const handleSave = () => onSave({ ...form, transferKeywords: parseKeywordList(keywords) });
+  const handleSave = () => {
+    const isAsset = form.type === 'asset';
+    const perPaycheck = parseFloat(contribution);
+    onSave({
+      ...form,
+      transferKeywords: parseKeywordList(keywords),
+      paycheckKeywords: isAsset ? parseKeywordList(paycheckKeywords) : undefined,
+      paycheckContribution: isAsset && perPaycheck > 0 ? perPaycheck : undefined,
+    });
+  };
 
   const handleCategoryChange = (e) => {
     const cat = CATEGORY_MAP[e.target.value];
@@ -430,6 +449,22 @@ function AccountForm({ account, bankProfiles, onSave }) {
           on the Spending or Income page. Add one balance you know afterwards (0 for a closed account).
         </p>
       </div>
+      {form.type === 'asset' && (
+        <>
+          <div className="form-group">
+            <label>Paychecks that contribute to it (keywords, comma-separated)</label>
+            <input value={paycheckKeywords} onChange={(e) => setPaycheckKeywords(e.target.value)} placeholder="e.g. acme corp payroll" />
+          </div>
+          <div className="form-group">
+            <label>Contribution per paycheck (yours + your employer&apos;s)</label>
+            <input type="number" step="0.01" min="0" value={contribution} onChange={(e) => setContribution(e.target.value)} placeholder="400.00" />
+            <p className="muted settings-help">
+              For a 401(k), HSA or other account you can&apos;t link: each payday with a deposit matching these keywords adds this
+              amount, so the balance keeps up between the balances you enter. Market gains and losses show only through those balances.
+            </p>
+          </div>
+        </>
+      )}
       <button className="btn-primary" onClick={handleSave}>Save</button>
     </>
   );
@@ -447,7 +482,66 @@ function SnapshotForm({ account, onSave }) {
     <>
       <div className="form-group"><label>Date</label><input type="date" value={form.date} onChange={set('date')} /></div>
       <div className="form-group"><label>Balance</label><input type="number" step="0.01" value={form.balance} onChange={set('balance')} placeholder="15000.00" /></div>
-      <button className="btn-primary" onClick={() => onSave(form)}>Save</button>
+      {/* A blank balance isn't $0: saving one would wipe out the account from that date on */}
+      <button className="btn-primary" onClick={() => onSave(form)} disabled={!form.date || form.balance === ''}>Save Balance</button>
     </>
+  );
+}
+
+// A CSV of dates and balances for this account, e.g. an export from a retirement plan's site
+function BalanceImport({ snapshots, onImport }) {
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState('');
+  const [imported, setImported] = useState(0);
+
+  const handleFiles = async ([file]) => {
+    setError('');
+    setImported(0);
+    setPreview(null);
+    const { balances, skipped } = parseBalanceHistory(await file.text());
+    if (!balances.length) {
+      setError(`Couldn't find any dates with balances in ${file.name}.`);
+      return;
+    }
+    setPreview({ balances, skipped });
+  };
+
+  const handleImport = () => {
+    onImport(preview.balances);
+    setImported(preview.balances.length);
+    setPreview(null);
+  };
+
+  const dates = new Set(preview?.balances.map((b) => b.date));
+  const replaced = snapshots.filter((s) => dates.has(s.date)).length;
+  const count = preview?.balances.length || 0;
+
+  return (
+    <div className="balance-import">
+      <h4>Import Balance History</h4>
+      <p className="muted settings-help">A CSV with a date and a balance on each row (a header row is optional).</p>
+      <FileDropZone onFiles={handleFiles} accept=".csv,.txt" label="Drop a CSV of balances here or" />
+      {error && <p className="error-text mt-12">{error}</p>}
+      {imported > 0 && <p className="mt-12">Imported {imported} balance{imported !== 1 ? 's' : ''}; they&apos;re listed at the top.</p>}
+      {preview && (
+        <div className="mt-12">
+          <p>
+            {count} balance{count !== 1 ? 's' : ''}, {preview.balances[0].date} ({formatCurrency(preview.balances[0].balance)})
+            {count > 1 && <> to {preview.balances[count - 1].date} ({formatCurrency(preview.balances[count - 1].balance)})</>}.
+            {replaced > 0 && <> Replaces {replaced} already entered for the same date{replaced !== 1 ? 's' : ''}.</>}
+          </p>
+          {preview.skipped.length > 0 && (
+            <p className="muted mt-12">
+              Skipped {preview.skipped.length} row{preview.skipped.length !== 1 ? 's' : ''} without a date and a balance:{' '}
+              {preview.skipped.slice(0, 3).map((s) => `row ${s.row} (${s.text})`).join('; ')}{preview.skipped.length > 3 ? '; …' : ''}
+            </p>
+          )}
+          <div className="modal-actions">
+            <button className="btn-primary" onClick={handleImport}>Import {count} Balance{count !== 1 ? 's' : ''}</button>
+            <button className="btn-secondary" onClick={() => setPreview(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

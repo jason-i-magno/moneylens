@@ -248,6 +248,21 @@ export function useFinanceData() {
     update((d) => ({ ...d, netWorth: { ...d.netWorth, snapshots: [...d.netWorth.snapshots, ...newSnaps] } }));
   }, [update]);
 
+  // A balance history for one account: each date replaces that account's balance on the same date
+  const importSnapshots = useCallback((accountId, balances, source) => {
+    const batchId = makeId('snap');
+    const createdAt = new Date().toISOString();
+    const dates = new Set(balances.map((b) => b.date));
+    const newSnaps = balances.map((b, i) => ({ accountId, date: b.date, balance: b.balance, source, id: `${batchId}_${i}`, createdAt }));
+    update((d) => ({
+      ...d,
+      netWorth: {
+        ...d.netWorth,
+        snapshots: [...d.netWorth.snapshots.filter((s) => s.accountId !== accountId || !dates.has(s.date)), ...newSnaps],
+      },
+    }));
+  }, [update]);
+
   const deleteSnapshot = useCallback((id) => {
     update((d) => ({ ...d, netWorth: { ...d.netWorth, snapshots: d.netWorth.snapshots.filter((s) => s.id !== id) } }));
   }, [update]);
@@ -328,6 +343,7 @@ export function useFinanceData() {
     updateAccount,
     deleteAccount,
     addSnapshots,
+    importSnapshots,
     deleteSnapshot,
     savePlaidItem,
     applyPlaidSync,

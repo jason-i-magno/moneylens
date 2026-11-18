@@ -206,6 +206,9 @@ button, select, input, textarea { font-family: inherit; }
 .nw-account-balance-wrap { text-align: right; }
 .nw-account-balance { font-weight: 600; font-variant-numeric: tabular-nums; }
 .nw-account-balance.liability { color: var(--accent-coral); }
+.balance-import { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
+.balance-import h4 { margin-bottom: 6px; }
+.balance-import .drop-zone { padding: 24px 16px; }
 
 /* === Mortgage === */
 .mortgage-summary { margin-bottom: 16px; }

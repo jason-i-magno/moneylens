@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildBalanceTimeline, buildNetWorthHistory, balanceEffect, followedTransfers, loanBalancePoints, transfersInTransit } from './netWorth';
+import { buildBalanceTimeline, buildNetWorthHistory, balanceEffect, followedTransfers, loanBalancePoints, paycheckContributions, transfersInTransit } from './netWorth';
 
 const tx = (date, amount, type, importedFrom = 'bank') => ({ date, amount, type, importedFrom });
 
@@ -186,6 +186,42 @@ describe('accounts that follow their transfers', () => {
   it('ignores the account\'s own linked transactions', () => {
     expect(followedTransfers({ linkedBankProfile: 'checking', transferKeywords: ['1111'] }, transactions)).toEqual([]);
     expect(followedTransfers({ transferKeywords: ['1111'] }, transactions).map((t) => t.date)).toEqual(['2024-02-05', '2024-02-20']);
+  });
+});
+
+describe('accounts that grow with paychecks', () => {
+  const pay = (date, amount, name = 'ACME CORP PAYROLL', type = 'credit', importedFrom = 'checking') => ({ date, amount, name, type, importedFrom });
+  const transactions = [
+    pay('2026-01-02', 1000),
+    pay('2026-01-09', 800),
+    pay('2026-01-09', 200, 'ACME CORP PAYROLL', 'credit', 'savings'), // the same paycheck split across two accounts
+    pay('2026-01-16', 1000),
+    pay('2026-01-16', 3000), // a bonus paid with it
+    pay('2026-01-20', 50, 'ACME CORP PAYROLL', 'debit'), // money out never counts
+    pay('2026-01-23', 1000, 'ACME SUPPLY CO'),
+    pay('2026-01-30', 1000),
+  ];
+  const k401 = { id: 'acct_r', type: 'asset', paycheckKeywords: ['acme corp'], paycheckContribution: 400 };
+  const balances = (account, snapshots) => buildBalanceTimeline(account, snapshots, transactions).map((p) => [p.date, p.balance]);
+
+  it('adds the contribution once on each payday', () => {
+    expect(paycheckContributions(k401, transactions)).toEqual([
+      { date: '2026-01-02', amount: 400 }, { date: '2026-01-09', amount: 400 }, { date: '2026-01-16', amount: 400 }, { date: '2026-01-30', amount: 400 },
+    ]);
+  });
+
+  it('grows after a balance and undoes paydays before the earliest one; each balance resets it', () => {
+    expect(balances(k401, [{ accountId: 'acct_r', date: '2026-01-10', balance: 10000 }, { accountId: 'acct_r', date: '2026-01-31', balance: 11000 }])).toEqual([
+      ['2026-01-01', 9200], ['2026-01-02', 9600], ['2026-01-09', 10000], ['2026-01-10', 10000],
+      ['2026-01-16', 10400], ['2026-01-30', 10800], ['2026-01-31', 11000],
+    ]);
+  });
+
+  it('needs keywords and an amount, ignores its own linked transactions, and never applies to a liability', () => {
+    expect(paycheckContributions({ ...k401, paycheckKeywords: [] }, transactions)).toEqual([]);
+    expect(paycheckContributions({ ...k401, paycheckContribution: undefined }, transactions)).toEqual([]);
+    expect(paycheckContributions({ ...k401, type: 'liability' }, transactions)).toEqual([]);
+    expect(paycheckContributions({ ...k401, linkedBankProfile: 'checking' }, transactions).map((c) => c.date)).toEqual(['2026-01-09']);
   });
 });
 

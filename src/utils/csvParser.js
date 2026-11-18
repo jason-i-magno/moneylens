@@ -63,6 +63,48 @@ export function parseAmount(row, config) {
   return { amount: Math.abs(raw), isDebit: raw > 0 };
 }
 
+// "$1,234.50" → 1234.5, "(25)" → -25; null when it isn't a number
+function parseMoney(text) {
+  const s = (text || '').replace(/[$,\s]/g, '');
+  const negative = /^\(.*\)$/.test(s);
+  const n = Number(negative ? s.slice(1, -1) : s);
+  return s && Number.isFinite(n) ? (negative ? -n : n) : null;
+}
+
+const looksLikeDate = (text) => DATE_FORMATS.some((f) => f.regex.test((text || '').trim()));
+
+// One account's balance history, e.g. a retirement site's export: a date column and a balance column
+// (headed Date and Balance/Value/Amount/Total, else the first two columns; the header row is optional).
+// Amounts may have $, commas, or parentheses for negatives. Rows whose date or balance can't be read are
+// returned in `skipped` (with their row number); a date listed twice keeps its last row.
+export function parseBalanceHistory(text) {
+  const rows = Papa.parse((text || '').trim(), { skipEmptyLines: true }).data.map((r) => r.map((c) => String(c).trim()));
+  if (!rows.length) return { balances: [], skipped: [] };
+
+  const hasHeader = !rows[0].some(looksLikeDate);
+  let dateCol = 0;
+  let balanceCol = 1;
+  if (hasHeader) {
+    const found = (re, not) => rows[0].findIndex((h, i) => i !== not && re.test(h));
+    dateCol = Math.max(found(/date|as of/i), 0);
+    balanceCol = found(/balance|value|amount|total/i, dateCol);
+    if (balanceCol < 0) balanceCol = dateCol === 0 ? 1 : 0;
+  }
+
+  const body = rows.slice(hasHeader ? 1 : 0);
+  const format = detectDateFormat(body.map((r) => r[dateCol]).filter(looksLikeDate));
+  const byDate = new Map();
+  const skipped = [];
+  body.forEach((r, i) => {
+    const date = parseDate(r[dateCol] || '', format);
+    const balance = parseMoney(r[balanceCol]);
+    if (date && balance !== null) byDate.set(date, { date, balance });
+    else skipped.push({ row: i + (hasHeader ? 2 : 1), text: r.join(', ') });
+  });
+  const balances = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  return { balances, skipped };
+}
+
 export function transformRows(rows, config) {
   const { dateColumn, descriptionColumn, categoryColumn, dateFormat } = config;
 
