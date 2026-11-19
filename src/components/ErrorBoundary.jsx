@@ -1,10 +1,9 @@
 import { Component } from 'react';
+import { backupJson } from '../utils/storage';
 
-const STORAGE_KEY = 'moneylens-data';
-
+// The latest data, even a change the server hasn't saved yet
 function downloadBackup() {
-  const raw = localStorage.getItem(STORAGE_KEY) || '{}';
-  const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
+  const url = URL.createObjectURL(new Blob([backupJson()], { type: 'application/json' }));
   const a = document.createElement('a');
   a.href = url;
   a.download = 'moneylens-backup.json';

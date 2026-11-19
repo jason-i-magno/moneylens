@@ -69,10 +69,10 @@ const tx = (id, overrides = {}) => ({
   ...overrides,
 });
 
-function setup(routes, { env = 'sandbox', problem = null } = {}) {
+function setup(routes, { env = 'sandbox', problem = null, allowedHosts } = {}) {
   const plaid = fakePlaid(routes);
   const store = createTokenStore(tokenFile);
-  const handler = createPlaidHandler({ env, problem, store, call: plaid.call });
+  const handler = createPlaidHandler({ env, problem, store, call: plaid.call, allowedHosts });
   return { handler, store, calls: plaid.calls };
 }
 
@@ -134,6 +134,14 @@ describe('plaid API: request checks', () => {
   it('does not treat inherited object keys as actions', async () => {
     const { handler } = setup({});
     expect((await request(handler, 'constructor')).status).toBe(404);
+  });
+
+  it('also answers the extra hosts it was given (the app reached through tailscale serve)', async () => {
+    const { handler } = setup({}, { problem: 'PLAID_SECRET_SANDBOX is not set.', allowedHosts: ['box.example.ts.net'] });
+    const headers = { host: 'box.example.ts.net:8443', origin: 'https://box.example.ts.net:8443' };
+    expect((await request(handler, 'status', {}, { headers })).status).toBe(200);
+    expect((await request(handler, 'status', {}, { headers: { ...headers, origin: 'https://evil.example' } })).status).toBe(403);
+    expect((await request(handler, 'status', {}, { headers: { host: 'other.example.ts.net' } })).status).toBe(403);
   });
 });
 

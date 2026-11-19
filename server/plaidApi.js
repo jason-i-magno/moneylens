@@ -4,6 +4,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { ApiError, actionName, checkRequest, parseHostList, readJson, sendError, sendJson } from './http.js';
 
 export const PLAID_HOSTS = {
   sandbox: 'https://sandbox.plaid.com',
@@ -45,16 +46,9 @@ export function resolvePlaidConfig(vars) {
   };
 }
 
-const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 const MAX_BODY_BYTES = 64 * 1024;
 
-export class PlaidApiError extends Error {
-  constructor(code, message, status = 400) {
-    super(message);
-    this.code = code;
-    this.status = status;
-  }
-}
+export class PlaidApiError extends ApiError {}
 
 export function createPlaidClient({ clientId, secret, baseUrl, fetchImpl = fetch }) {
   return async function call(path, body) {
@@ -189,8 +183,9 @@ async function syncTransactions(call, accessToken, cursor) {
 
 const cleanString = (value, max = 100) => (typeof value === 'string' ? value.slice(0, max) : null);
 
-// `problem` comes from resolvePlaidConfig: when set, only `status` works and it reports the problem
-export function createPlaidHandler({ env, problem, store, call }) {
+// `problem` comes from resolvePlaidConfig: when set, only `status` works and it reports the problem.
+// `allowedHosts`: names it answers to besides localhost (see checkRequest).
+export function createPlaidHandler({ env, problem, store, call, allowedHosts = [] }) {
   const configured = !problem;
 
   const requireItem = async (itemId) => {
@@ -282,81 +277,35 @@ export function createPlaidHandler({ env, problem, store, call }) {
 
   return async function handler(req, res) {
     try {
-      const host = req.headers.host || '';
-      // Refuse other hosts (DNS rebinding) and other sites' pages (cross-site requests)
-      if (!LOCAL_HOST.test(host)) {
-        throw new PlaidApiError('FORBIDDEN', 'Bank sync only answers requests to localhost.', 403);
-      }
-      const { origin } = req.headers;
-      if (origin && origin !== `http://${host}` && origin !== `https://${host}`) {
-        throw new PlaidApiError('FORBIDDEN', 'Cross-origin requests are not allowed.', 403);
-      }
-      if (req.method !== 'POST') throw new PlaidApiError('METHOD_NOT_ALLOWED', 'Use POST.', 405);
-      if (!(req.headers['content-type'] || '').startsWith('application/json')) {
-        throw new PlaidApiError('UNSUPPORTED_MEDIA_TYPE', 'Send JSON.', 415);
-      }
-
-      const name = (req.url || '').replace(/^\/+|\?.*$/g, '');
+      checkRequest(req, allowedHosts);
+      const name = actionName(req);
       if (!Object.hasOwn(actions, name)) throw new PlaidApiError('NOT_FOUND', `Unknown action "${name}".`, 404);
       if (name !== 'status' && !configured) {
         throw new PlaidApiError('NOT_CONFIGURED', problem);
       }
 
-      const body = await readJson(req);
-      sendJson(res, 200, await actions[name](body));
+      const body = await readJson(req, MAX_BODY_BYTES);
+      sendJson(req, res, 200, await actions[name](body));
     } catch (err) {
-      const status = err instanceof PlaidApiError ? err.status : 500;
       // Usually the other environment's secret pasted into this environment's variable
       const message = err.code === 'INVALID_API_KEYS'
         ? `Plaid rejected the keys for ${env}. Make sure ${secretVarFor(env)} in .env.local is the ${env} secret from Plaid's Keys page (each environment has its own).`
         : err.message;
-      sendJson(res, status, { error: { code: err.code || 'SERVER_ERROR', message } });
+      sendError(req, res, err, message);
     }
   };
 }
 
-function readJson(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    req.on('data', (chunk) => {
-      size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
-        reject(new PlaidApiError('TOO_LARGE', 'Request body too large.', 413));
-        req.destroy();
-      } else {
-        chunks.push(chunk);
-      }
-    });
-    req.on('end', () => {
-      try {
-        const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
-        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('not an object');
-        resolve(body);
-      } catch {
-        reject(new PlaidApiError('BAD_REQUEST', 'Body must be a JSON object.'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-function sendJson(res, status, body) {
-  res.statusCode = status;
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Cache-Control', 'no-store');
-  res.end(JSON.stringify(body));
-}
-
 // Vite plugin: mounts the API at /api/plaid on `npm run dev` and `npm run preview`.
 // A static build (dist/) has no server, so Bank Sync shows setup instructions there instead.
-// `vars` = the PLAID_* variables; `overrides` (baseUrl, tokenFile) exist for testing.
+// `vars` = the PLAID_* and MONEYLENS_* variables; `overrides` (baseUrl, tokenFile) exist for testing.
 export function plaidApiPlugin(vars, overrides = {}) {
   const { env, clientId, secret, problem, tokenFile } = resolvePlaidConfig(vars);
+  const allowedHosts = parseHostList(vars.MONEYLENS_ALLOWED_HOSTS);
   const attach = (server) => {
     const store = createTokenStore(overrides.tokenFile || tokenFile || DEFAULT_TOKEN_FILE);
     const call = createPlaidClient({ clientId, secret, baseUrl: overrides.baseUrl || PLAID_HOSTS[env] });
-    server.middlewares.use('/api/plaid', createPlaidHandler({ env, problem, store, call }));
+    server.middlewares.use('/api/plaid', createPlaidHandler({ env, problem, store, call, allowedHosts }));
   };
   return { name: 'moneylens-plaid-api', configureServer: attach, configurePreviewServer: attach };
 }

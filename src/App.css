@@ -260,6 +260,13 @@ button, select, input, textarea { font-family: inherit; }
 .snapshot-list { margin-bottom: 20px; }
 .duplicate-choice { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
 .mt-12 { margin-top: 12px; }
+.storage-versions { max-height: 360px; overflow-y: auto; }
+.storage-versions td { white-space: nowrap; }
+
+/* === Storage (saving to MoneyLens's server) === */
+.save-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: -8px 0 20px; padding: 10px 14px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent-purple) 12%, transparent); font-size: 0.9rem; }
+.save-notice.error { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.startup-loading { padding: 48px 0; }
 
 /* === Bank Sync === */
 .page a { color: var(--accent-coral); }

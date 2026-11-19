@@ -1,8 +1,20 @@
 import { useState, useRef, useMemo } from 'react';
+import ConfirmButton from '../components/ConfirmButton';
 import { CATEGORY_MAP } from '../constants/categories';
 import { diffKeywords, getEffectiveKeywords, proposeRecategorization } from '../utils/categorizer';
 
 const formatKeywords = (added, removed) => JSON.stringify(getEffectiveKeywords(added, removed), null, 2);
+
+function downloadJson(text, filename) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+const formatSavedAt = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
 export default function Settings({
   data,
@@ -12,6 +24,9 @@ export default function Settings({
   exportData,
   importData,
   resetData,
+  storage,
+  restoreVersion,
+  moveToServer,
 }) {
   const [keywords, setKeywords] = useState(() => formatKeywords(data.categoryKeywords, data.removedKeywords));
   const [keywordsError, setKeywordsError] = useState('');
@@ -69,36 +84,29 @@ export default function Settings({
     setRecatChanges(null);
   };
 
-  const handleExport = () => {
-    const json = exportData();
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'moneylens-backup.json';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const handleExport = () => downloadJson(exportData(), 'moneylens-backup.json');
 
-  const handleImportFile = (e) => {
+  // The page reloads only once the new data is saved
+  const handleImportFile = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      if (importData(ev.target.result)) {
-        window.location.reload();
-      } else {
-        setImportError(`Couldn't read ${file.name} — it isn't a MoneyLens JSON backup.`);
-      }
-    };
-    reader.readAsText(file);
     e.target.value = '';
+    try {
+      if (await importData(await file.text())) window.location.reload();
+      else setImportError(`Couldn't read ${file.name} — it isn't a MoneyLens JSON backup.`);
+    } catch (err) {
+      setImportError(`Couldn't save the backup: ${err.message}`);
+    }
   };
 
-  const handleReset = () => {
-    resetData();
-    setShowReset(false);
-    window.location.reload();
+  const handleReset = async () => {
+    try {
+      await resetData();
+      window.location.reload();
+    } catch (err) {
+      setImportError(`Couldn't reset: ${err.message}`);
+      setShowReset(false);
+    }
   };
 
   const profiles = Object.entries(data.bankProfiles || {});
@@ -186,6 +194,8 @@ export default function Settings({
         )}
       </div>
 
+      <StorageCard data={data} storage={storage} restoreVersion={restoreVersion} moveToServer={moveToServer} />
+
       <div className="card">
         <h3>Data Management</h3>
         <div className="data-actions">
@@ -205,6 +215,120 @@ export default function Settings({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Where the data is kept: this browser, or MoneyLens's server (with its earlier versions)
+function StorageCard({ data, storage, restoreVersion, moveToServer }) {
+  const [versions, setVersions] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [ownCopy, setOwnCopy] = useState(() => storage.ownCopyFromBefore?.() || null);
+
+  const run = async (fn) => {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleMove = () => run(async () => {
+    try {
+      await moveToServer();
+    } catch (err) {
+      throw err.code === 'CONFLICT'
+        ? new Error('Another browser moved its data to the server first. Reload this page to use that data.')
+        : err;
+    }
+    window.location.reload();
+  });
+
+  const handleShowVersions = () => run(async () => setVersions(await storage.versions()));
+
+  const handleRestore = (v) => run(async () => {
+    await restoreVersion(v.rev, `Restored the version from ${formatSavedAt(v.savedAt)}`);
+    window.location.reload();
+  });
+
+  const handleDiscardOwnCopy = () => {
+    storage.discardOwnCopy();
+    setOwnCopy(null);
+  };
+
+  if (storage.mode === 'local') {
+    const hasData = data.transactions.length > 0 || data.netWorth.accounts.length > 0 || data.mortgages.loans.length > 0;
+    return (
+      <div className="card">
+        <h3>Storage</h3>
+        {!storage.serverAvailable ? (
+          <p className="muted">Your data is saved in this browser only.</p>
+        ) : (
+          <>
+            <p className="muted settings-help">
+              Your data is saved in this browser only. MoneyLens&apos;s server can keep it in its database instead: one copy that
+              every browser opening the app through the server shares, on this computer or another one, with earlier versions kept.
+              This browser&apos;s own copy is set aside, not deleted.
+            </p>
+            <button className="btn-primary" onClick={handleMove} disabled={busy || !hasData}>
+              Move This Browser&apos;s Data to the Server
+            </button>
+            {!hasData && <p className="muted mt-12">There&apos;s nothing in this browser to move yet.</p>}
+          </>
+        )}
+        {error && <p className="error-text mt-12">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <h3>Storage</h3>
+      <p className="muted settings-help">
+        Your data is saved in MoneyLens&apos;s database on the computer running the server. Every browser that opens the app through it
+        shares the same copy, and each save is kept as a version you can go back to.
+      </p>
+      {versions === null ? (
+        <button className="btn-secondary" onClick={handleShowVersions} disabled={busy}>Show Earlier Versions</button>
+      ) : (
+        <div className="import-preview storage-versions">
+          <table>
+            <thead>
+              <tr><th>Saved</th><th>Transactions</th><th>Accounts</th><th>Note</th><th></th></tr>
+            </thead>
+            <tbody>
+              {versions.map((v, i) => (
+                <tr key={v.rev}>
+                  <td>{formatSavedAt(v.savedAt)}</td>
+                  <td>{v.transactions}</td>
+                  <td>{v.accounts}</td>
+                  <td className="desc-cell">{v.note || ''}</td>
+                  <td>
+                    {i === 0 ? <span className="muted">Current</span> : (
+                      <ConfirmButton label="Restore" confirmLabel="Replace current data?" className="btn-icon" onConfirm={() => handleRestore(v)} />
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {ownCopy && (
+        <div className="mt-12">
+          <p className="muted settings-help">This browser&apos;s own copy from before it used the server is still kept here.</p>
+          <div className="data-actions">
+            <button className="btn-secondary" onClick={() => downloadJson(ownCopy, 'moneylens-browser-copy.json')}>Download It</button>
+            <ConfirmButton label="Delete It" confirmLabel="Delete this browser's copy?" onConfirm={handleDiscardOwnCopy} />
+          </div>
+        </div>
+      )}
+      {error && <p className="error-text mt-12">{error}</p>}
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth without paid APIs. Transactions come in as **CSV files downloaded from the bank's website** or, optionally, through **Bank Sync** (Plaid's free Trial plan, via a small local server); balances and mortgage payments can also be read from **statement PDFs**. App data is stored locally in the browser.
+MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth without paid APIs. Transactions come in as **CSV files downloaded from the bank's website** or, optionally, through **Bank Sync** (Plaid's free Trial plan, via a small local server); balances and mortgage payments can also be read from **statement PDFs**. App data stays on the user's own computer: in one SQLite database through the app's local server, shared by every browser that opens it there (see [Storage](#storage)), or in the browser itself.
 
 Built-in support: CSV profiles for **US Bank checking, American Express, and Discover**; statement PDF parsers for **Lakeview/LoanCare**, **Rocket Mortgage** and **Valon/Carrington** (mortgage payments) and **US Bank** (account balances). Other banks work through manual column mapping or Bank Sync.
 
@@ -13,20 +13,20 @@ Built-in support: CSV profiles for **US Bank checking, American Express, and Dis
 - **Framework:** React 18 with Vite 6
 - **Language:** JavaScript (JSX), no TypeScript unless asked
 - **Styling:** single global `src/App.css` with CSS custom properties (dark theme)
-- **Storage:** localStorage, one key (`moneylens-data`), versioned and migrated on load
+- **Storage:** one JSON document, versioned and migrated on load: in a SQLite database through the local server (`server/dataApi.js`, Node's built-in `node:sqlite`), else in localStorage (key `moneylens-data`). See [Storage](#storage).
 - **Routing:** React Router v6 (`BrowserRouter`, v7 future flags on); pages are lazy-loaded
 - **Charts:** Recharts
 - **CSV parsing:** PapaParse
 - **PDF parsing:** pdfjs-dist (loaded on demand — only the Mortgage and Net Worth pages import it)
 - **Tests:** Vitest (unit tests for `src/utils` and `server/`, run with `TZ=Etc/GMT+10` (UTC−10) so UTC-vs-local date bugs show up)
 - **Lint:** ESLint 9 flat config with `react-hooks` and `react-refresh`
-- **Backend:** none, except the Bank Sync API (`server/plaidApi.js`), a Vite plugin that runs inside `npm run dev` / `npm run preview`. Everything else is client-side and deploys as a static site (Vercel/Netlify); Bank Sync just shows setup instructions there.
+- **Backend:** none, except the local server: the Bank Sync API (`server/plaidApi.js`) and the data API (`server/dataApi.js`), Vite plugins that run inside `npm run dev` / `npm run preview`. Everything else is client-side and deploys as a static site (Vercel/Netlify); there Bank Sync just shows setup instructions and the data stays in the browser.
 
 ## Commands
 
 ```bash
 npm install        # Install deps
-npm run dev        # Start dev server (with the Bank Sync API)
+npm run dev        # Start dev server (with the Bank Sync and data APIs)
 npm test           # Run unit tests once (npm run test:watch to watch)
 npm run lint       # ESLint
 npm run build      # Production build
@@ -77,7 +77,7 @@ All rules live in `src/utils/transactions.js` — use these helpers, never re-im
 | `/net-worth` | Net Worth | Accounts (assets/liabilities) with balance snapshots; live balances for accounts linked to a bank profile; mortgage loans and properties included automatically; US Bank statement PDF import; balance history CSV import per account; paycheck contributions for accounts that can't be linked (a 401(k)) |
 | `/import` | Import | CSV import wizard (below) |
 | `/bank-sync` | Bank Sync | Connect banks through Plaid, choose where each account syncs, sync, reconnect, disconnect (below) |
-| `/settings` | Settings | Delete saved bank profiles; edit category keywords; re-categorize imported and synced transactions; export/import JSON; reset |
+| `/settings` | Settings | Delete saved bank profiles; edit category keywords; re-categorize imported and synced transactions; storage (move this browser's data to the server; earlier versions and restore); export/import JSON; reset |
 
 ## CSV Import (`/import`) — primary data entry
 
@@ -114,9 +114,9 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
 
 ## Bank Sync (`/bank-sync`) — Plaid
 
-**Where things live.** The Plaid keys are in `.env.local` (gitignored; template in `.env.example`; loaded in `vite.config.js` with `loadEnv(…, 'PLAID_')` — never give them a `VITE_` prefix, or Vite ships them to the browser): one `PLAID_CLIENT_ID`, one secret per environment (`PLAID_SECRET_SANDBOX`, `PLAID_SECRET_PRODUCTION`), and `PLAID_ENV` choosing between them. `resolvePlaidConfig` turns these into the API's config or a setup problem to show (a missing variable, or the retired single `PLAID_SECRET`, which is never guessed at). Per-bank access tokens are in `~/.config/moneylens/plaid-tokens.json` (override with `PLAID_TOKEN_FILE`), outside the repo so they can't be committed, served by Vite, or wiped by `git clean -x`. The browser stores only `data.plaid.items` (account mapping + sync cursor) and never sees a token or the secret.
+**Where things live.** The Plaid keys are in `.env.local` (gitignored; template in `.env.example`; loaded in `vite.config.js` with `loadEnv(…, ['PLAID_', 'MONEYLENS_'])` — never give them a `VITE_` prefix, or Vite ships them to the browser): one `PLAID_CLIENT_ID`, one secret per environment (`PLAID_SECRET_SANDBOX`, `PLAID_SECRET_PRODUCTION`), and `PLAID_ENV` choosing between them. `resolvePlaidConfig` turns these into the API's config or a setup problem to show (a missing variable, or the retired single `PLAID_SECRET`, which is never guessed at). Per-bank access tokens are in `~/.config/moneylens/plaid-tokens.json` (override with `PLAID_TOKEN_FILE`), outside the repo so they can't be committed, served by Vite, or wiped by `git clean -x`. The browser stores only `data.plaid.items` (account mapping + sync cursor) and never sees a token or the secret.
 
-**Local API** (`server/plaidApi.js`, mounted at `/api/plaid/*` by `plaidApiPlugin`): POST + JSON only; refuses non-localhost `Host` headers (DNS rebinding) and foreign `Origin`s, because plugin middleware runs before Vite's own CORS/host checks. Actions: `status`, `link-token` (with `itemId` = update mode), `exchange`, `accounts`, `sync`, `remove`. `PLAID_ENV` is `sandbox` or `production`; tokens are stored per environment.
+**Local API** (`server/plaidApi.js`, mounted at `/api/plaid/*` by `plaidApiPlugin`): POST + JSON only; refuses `Host` headers other than localhost and `MONEYLENS_ALLOWED_HOSTS` (DNS rebinding) and foreign `Origin`s, because plugin middleware runs before Vite's own CORS/host checks (`checkRequest` in `server/http.js`, shared with the data API). Actions: `status`, `link-token` (with `itemId` = update mode), `exchange`, `accounts`, `sync`, `remove`. `PLAID_ENV` is `sandbox` or `production`; tokens are stored per environment.
 
 **Plaid specifics that shaped the code:**
 - Link products: `['transactions']` with `days_requested: 730`. Plaid Link must load from `cdn.plaid.com` (`src/utils/plaidClient.js`); desktop web needs no redirect URI (OAuth opens a popup).
@@ -135,6 +135,28 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
 - **Transfers between the connection's own accounts** (`pairOwnTransfers`): after each sync, a debit and a same-amount credit in two different synced accounts of the same connection, at most 3 days apart (closest first), both become `transfers` and get `pairedTransfer: true`. Both sides must be uncategorized (`other` / `other_income`) with a `TRANSFER_*` Plaid category, or already transfers, and neither may have `categorySetByUser`, so keyword and user categories are never overridden. Rows from earlier syncs take part (the other side can post later); a row is paired at most once, so a user's later change sticks. Re-categorizing keeps a paired row a transfer unless a keyword matches.
 - Balances become a `source: 'plaid'` snapshot for today on the Net Worth account linked to the target (created if missing), replacing an earlier Plaid snapshot that day; a manual or PDF snapshot for the same day wins.
 - "Change Accounts" deletes the item's synced transactions and the Net Worth accounts it created, then shows the setup again (no new Plaid connection needed).
+
+## Storage
+
+`src/utils/storage.js` (browser) and `server/dataApi.js` (server). `main.jsx` awaits `openStorage()` before rendering the app, so everything that runs on open (Bank Sync's sync-on-open) sees the data; `StartupScreen` shows meanwhile, or with Try Again when the server can't be reached. `useFinanceData(store)` takes the store and is the only code that saves: never read or write `localStorage` directly.
+
+- **Two kinds of store, one shape.** Server: the database has data, and every browser that opens the app through this server loads and saves the same copy. Local: no server (a static host), or the server's database is still empty; Settings → Storage then offers **Move This Browser's Data to the Server** (a save on top of version 0, so a second browser moving its data gets a conflict instead of overwriting the first).
+- **No silent fallback.** Once the server has answered in a browser, `moneylens-server` is set in its localStorage, and from then on an unreachable server shows the start-up error instead of the browser's own (old or empty) data. When a browser starts using the server, its own copy moves to `moneylens-data-before-server` (Settings offers to download or delete it); it's never used again.
+- **Saves** (`createSaver`): the whole document, one save at a time, gzipped (`CompressionStream`), each on top of the version the last one made (`baseRev`). A newer change replaces one still waiting. A failed save is retried with backoff, with a "Not saved yet" banner and a warning on closing the page. If another window saved first, the server answers 409 `CONFLICT`: the window loads the latest version and drops its unsaved change (it can't be merged), with a notice. Windows load what others saved on focus, on coming back online, and every 60 s while visible (`load` with `since`, which answers `unchanged` when nothing is newer).
+- **Versions:** every save is a gzipped row in the `versions` table; the newest 100 and the last of each of the 60 latest (UTC) days are kept. Settings → Storage → Show Earlier Versions lists them (time, counts, note) and Restore saves an old one as a new version, so a restore can be undone too. Replacing everything (import, reset, restore, move) goes through `replaceData`, which waits for the save before the page reloads, and gives the version a note.
+- **Database file:** `~/.config/moneylens/moneylens.db` (`MONEYLENS_DB` overrides), created 0600 next to the Bank Sync tokens: outside the repo, so it can't be committed or served. `node:sqlite` needs Node 22.13+ and prints an ExperimentalWarning; it's imported only when the server starts, never by `vite build`.
+- **From another device (Tailscale):** `tailscale serve --bg --https=8443 http://localhost:5173` (needs sudo, or `tailscale set --operator=$USER` once) gives the app an HTTPS address only the tailnet reaches, and `MONEYLENS_ALLOWED_HOSTS` in `.env.local` names it, for Vite's `allowedHosts` and both APIs' host check. The tailnet name is the user's, so it goes only in `.env.local`. There's no login: anything that can reach the address can read and change everything.
+- **As a service:** a systemd user unit can keep the server running (`loginctl enable-linger` makes it start at boot):
+  ```ini
+  [Service]
+  Type=exec
+  WorkingDirectory=/path/to/moneylens
+  ExecStart=/usr/bin/npm run dev -- --strictPort
+  Restart=on-failure
+  [Install]
+  WantedBy=default.target
+  ```
+  `--strictPort` makes it fail rather than move to another port that `tailscale serve` wouldn't follow. Stop it before running `npm run dev` by hand.
 
 ## Auto-Categorization (`src/utils/categorizer.js`)
 
@@ -218,7 +240,7 @@ The five colored ones are in fixed order and were checked for telling apart on t
 
 ## Data Model
 
-Single localStorage key `moneylens-data`:
+One JSON document, the same wherever it's stored (a version in the server's database, or localStorage key `moneylens-data`):
 
 ```json
 {
@@ -314,10 +336,12 @@ moneylens/
 ├── vite.config.js                 # Loads PLAID_* env, mounts the Bank Sync API; also Vitest config (TZ)
 ├── public/favicon.svg
 ├── server/
-│   ├── plaidApi.js                # Bank Sync API: Plaid calls, token store, request checks, Vite plugin
-│   └── plaidApi.test.js
+│   ├── http.js                    # Request checks (host, origin, JSON POST) and JSON/gzip helpers for both APIs
+│   ├── plaidApi.js                # Bank Sync API: Plaid calls, token store, Vite plugin
+│   ├── dataApi.js                 # Data API: the SQLite store (versions, conflicts), Vite plugin
+│   └── *.test.js
 └── src/
-    ├── main.jsx                   # ErrorBoundary + BrowserRouter
+    ├── main.jsx                   # Opens the storage, then ErrorBoundary + BrowserRouter + App
     ├── App.jsx                    # Routes, lazy pages, passes finance hook down as props
     ├── App.css
     ├── constants/
@@ -328,7 +352,7 @@ moneylens/
     │   ├── plaidCategories.js     # Plaid personal_finance_category → our category (fallback)
     │   └── bankProfiles.js        # Built-in CSV profiles, filename detection, profile → account map, Plaid institution hints
     ├── hooks/
-    │   ├── useFinanceData.js      # All state + CRUD + localStorage persistence
+    │   ├── useFinanceData.js      # All state + CRUD; saves through the store
     │   └── usePlaidSync.js        # Bank Sync server status, sync calls, sync-on-open
     ├── utils/
     │   ├── transactions.js        # isIncome / isSpending / isTransfer, sums
@@ -341,6 +365,7 @@ moneylens/
     │   ├── mortgageCalculations.js
     │   ├── mortgagePdfParser.js   # Lakeview/Rocket/Valon mortgage + US Bank statement PDFs
     │   ├── migrate.js             # Default data, schema version, migrations
+    │   ├── storage.js             # Server or browser storage, save queue, refresh from other windows
     │   ├── dates.js               # Local-date helpers (todayISO, currentMonth, addDays, …)
     │   ├── ids.js                 # makeId
     │   ├── subscriptions.js       # getMonthlyAmount
@@ -350,6 +375,7 @@ moneylens/
     ├── components/
     │   ├── Layout.jsx             # Header, nav, Suspense around routes
     │   ├── ErrorBoundary.jsx      # Crash screen with "Download Backup"
+    │   ├── StartupScreen.jsx      # Loading, or the server can't be reached (Try Again)
     │   ├── Modal.jsx
     │   ├── ConfirmButton.jsx      # Two-click destructive action
     │   ├── TransactionRow.jsx     # Edit/Del shown only when handlers passed
@@ -383,13 +409,13 @@ moneylens/
 
 ## Personal Data
 
-The repo is public; the app's real data lives only in the browser's localStorage, and Bank Sync's secrets only in `.env.local` and `~/.config/moneylens/`. Never commit:
+The repo is public; the app's real data lives only in the server's database (`~/.config/moneylens/moneylens.db`) or the browser's localStorage, and Bank Sync's secrets only in `.env.local` and `~/.config/moneylens/`. Never commit:
 
 - Account, loan, or card numbers (even partial), balances, payment amounts, addresses
 - Merchant names, banks, or services that identify the user's own spending — use `privateKeywords.local.js`
 - Real statement text, CSV exports, PDFs, or JSON backups — tests use invented fixtures (e.g. `Account Number 1-234-5678-9012`)
 - Plaid keys (`.env.local`), the token file, or real Plaid item/account/transaction IDs — tests use made-up ones (`item_1`, `acc_chk`)
-- Facts about the user (location, timezone, which accounts they hold) in code comments, docs, or commit messages
+- Facts about the user (location, timezone, which accounts they hold, machine or tailnet names) in code comments, docs, or commit messages
 
 Before committing, scan the diff for digits that look like account numbers or exact dollar amounts.
 
@@ -401,6 +427,7 @@ Not built yet (build only when asked):
 - Customizing subscription keywords
 - Dashboard budget markers are full-height reference lines, not per-bar
 - "Detected from Imports" monthly estimate averages charges without normalizing frequency or excluding cancelled subscriptions
+- The local server has no login (Tailscale is the only gate), and two windows editing at once don't merge: the later save is dropped
 - Bank Sync uses only Plaid's Transactions product: no Liabilities (mortgage details still come from statement PDFs) or Investments (brokerages may not appear in Link), no webhooks, no on-demand `/transactions/refresh`
 
 ## Future Enhancements (Don't Build Yet)

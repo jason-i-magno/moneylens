@@ -16,15 +16,25 @@ const Import = lazy(() => import('./pages/Import'));
 const BankSync = lazy(() => import('./pages/BankSync'));
 const Settings = lazy(() => import('./pages/Settings'));
 
-export default function App() {
-  const finance = useFinanceData();
+// store: where the data is kept (see src/utils/storage.js), opened before the app renders
+export default function App({ store }) {
+  const finance = useFinanceData(store);
   const { data } = finance;
   const plaidSync = usePlaidSync(finance);
   const bankSyncAlert = data.plaid.items.some((i) => i.lastError);
 
   return (
     <Routes>
-      <Route element={<Layout bankSyncAlert={bankSyncAlert} />}>
+      <Route
+        element={
+          <Layout
+            bankSyncAlert={bankSyncAlert}
+            saveState={finance.saveState}
+            notice={finance.notice}
+            onDismissNotice={finance.dismissNotice}
+          />
+        }
+      >
         <Route path="/dashboard" element={<Dashboard data={data} />} />
         <Route
           path="/subscriptions"
@@ -84,6 +94,9 @@ export default function App() {
               exportData={finance.exportData}
               importData={finance.importData}
               resetData={finance.resetData}
+              storage={finance.storage}
+              restoreVersion={finance.restoreVersion}
+              moveToServer={finance.moveToServer}
             />
           }
         />

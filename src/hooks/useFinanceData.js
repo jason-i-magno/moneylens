@@ -1,32 +1,51 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { createDefaultData, migrateData } from '../utils/migrate';
 import { makeId } from '../utils/ids';
 import { todayISO } from '../utils/dates';
 import { applySyncResult, removePlaidItem as removeItem, setPlaidItemError as setItemError } from '../utils/plaidSync';
 import { applyTransactionEdit } from '../utils/transactions';
 
-const STORAGE_KEY = 'moneylens-data';
+const CONFLICT_NOTICE = 'This was changed in another window, so the latest is shown here. Your last change in this window wasn\u2019t saved.';
 
-function loadData() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createDefaultData();
-    return migrateData(JSON.parse(raw));
-  } catch {
-    return createDefaultData();
-  }
-}
-
-function saveData(data) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-}
-
-export function useFinanceData() {
-  const [data, setData] = useState(loadData);
+// store: from openStorage (src/utils/storage.js): this browser's storage or MoneyLens's server
+export function useFinanceData(store) {
+  const [data, setData] = useState(store.initialData);
+  // What the store already has, so data that came from it isn't sent back
+  const stored = useRef(store.initialData);
+  const [saveState, setSaveState] = useState(store.state || { status: 'saved' });
+  const [notice, setNotice] = useState(null);
 
   useEffect(() => {
-    saveData(data);
-  }, [data]);
+    if (data === stored.current) return;
+    stored.current = data;
+    store.save(data);
+  }, [data, store]);
+
+  useEffect(() => store.onState(setSaveState), [store]);
+
+  // Data saved by another window replaces this one's
+  useEffect(() => store.subscribe(({ data: next, reason }) => {
+    stored.current = next;
+    setData(next);
+    if (reason === 'conflict') setNotice(CONFLICT_NOTICE);
+  }), [store]);
+
+  useEffect(() => {
+    const warn = (e) => {
+      if (!store.hasUnsaved()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [store]);
+
+  // Replaces everything and resolves once it's saved (callers reload the page afterwards)
+  const replaceData = useCallback(async (next, note) => {
+    stored.current = next;
+    setData(next);
+    await store.save(next, note);
+  }, [store]);
 
   const update = useCallback((updater) => {
     setData((prev) => {
@@ -299,23 +318,38 @@ export function useFinanceData() {
     return JSON.stringify(data, null, 2);
   }, [data]);
 
-  const importData = useCallback((jsonStr) => {
+  // Resolves false when jsonStr isn't a backup; rejects when the new data couldn't be saved
+  const importData = useCallback(async (jsonStr) => {
+    let imported;
     try {
-      const imported = JSON.parse(jsonStr);
-      if (!imported || typeof imported !== 'object' || Array.isArray(imported)) return false;
-      setData(migrateData(imported));
-      return true;
+      imported = JSON.parse(jsonStr);
     } catch {
       return false;
     }
-  }, []);
+    if (!imported || typeof imported !== 'object' || Array.isArray(imported)) return false;
+    await replaceData(migrateData(imported), 'Imported a backup');
+    return true;
+  }, [replaceData]);
 
-  const resetData = useCallback(() => {
-    setData(createDefaultData());
-  }, []);
+  const resetData = useCallback(() => replaceData(createDefaultData(), 'Reset all data'), [replaceData]);
+
+  // Server only: an earlier version becomes the latest (itself a new version, so it can be undone too)
+  const restoreVersion = useCallback(async (rev, note) => {
+    const version = await store.loadVersion(rev);
+    await replaceData(version.data, note);
+  }, [store, replaceData]);
+
+  // Local only, while the server's database is empty
+  const moveToServer = useCallback(() => store.moveToServer(data), [store, data]);
 
   return {
     data,
+    storage: store,
+    saveState,
+    notice,
+    dismissNotice: () => setNotice(null),
+    restoreVersion,
+    moveToServer,
     addSubscription,
     updateSubscription,
     deleteSubscription,

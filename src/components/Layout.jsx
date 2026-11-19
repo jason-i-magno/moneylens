@@ -15,8 +15,9 @@ const NAV_ITEMS = [
   { to: '/settings', label: 'Settings' },
 ];
 
-// bankSyncAlert: a connection failed its last sync (e.g. the bank wants the user to log in again)
-export default function Layout({ bankSyncAlert }) {
+// bankSyncAlert: a connection failed its last sync (e.g. the bank wants the user to log in again).
+// saveState / notice: from useFinanceData, about saving to MoneyLens's server.
+export default function Layout({ bankSyncAlert, saveState, notice, onDismissNotice }) {
   return (
     <div className="app-layout">
       <header className="app-header">
@@ -34,6 +35,17 @@ export default function Layout({ bankSyncAlert }) {
           ))}
         </nav>
       </header>
+      {saveState?.status === 'retrying' && (
+        <div className="save-notice error" role="status">
+          Not saved yet: {saveState.message} Trying again…
+        </div>
+      )}
+      {notice && (
+        <div className="save-notice" role="status">
+          <span>{notice}</span>
+          <button className="btn-icon" onClick={onDismissNotice}>Dismiss</button>
+        </div>
+      )}
       <main className="app-main">
         <Suspense fallback={<p className="muted">Loading…</p>}>
           <Outlet />
