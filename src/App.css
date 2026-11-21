@@ -232,6 +232,18 @@ h4.projection-subheading { margin: 0; }
 .projection-when input { width: 90px; flex: none; }
 .projection-change-add button { width: 100%; }
 .projection-chart .recharts-reference-line { pointer-events: none; }
+.projection-chart-pick { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; font-size: 0.85rem; color: var(--text-muted); }
+.projection-chart-pick select { min-width: 0; max-width: 100%; background-color: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: var(--radius-sm); font-family: inherit; }
+.projection-accounts { margin-top: 12px; }
+.projection-accounts-table { margin-top: 12px; }
+.projection-accounts-table th, .projection-accounts-table td { text-align: right; white-space: nowrap; }
+.projection-accounts-table th:first-child, .projection-accounts-table td:first-child { text-align: left; }
+.projection-group-row td { padding-top: 14px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.projection-accounts-table td.owed { color: var(--accent-coral); }
+.projection-total-row td { font-weight: 700; border-top: 2px solid var(--border); }
+.projection-chart-link { background: none; border: none; padding: 0; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.projection-chart-link:hover { color: var(--accent-purple); }
+tr.charted .projection-chart-link { color: var(--accent-purple); font-weight: 600; }
 .projection-tooltip { background: var(--card); border: 1px solid #333; border-radius: 8px; padding: 10px 12px; font-size: 0.85rem; line-height: 1.5; white-space: normal; }
 .projection-tooltip-month { font-weight: 600; margin-bottom: 2px; }
 .projection-tooltip-event { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); color: var(--text-muted); }

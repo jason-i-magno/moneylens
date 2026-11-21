@@ -182,9 +182,12 @@ export function resolveChanges(list) {
 //   changes: future changes (see resolveChanges); ones with `enabled: false` are left out
 // }
 // Each month, take-home pay minus spending, escrow and loan payments is saved: into cash until cash
-// accounts and savings reach the cushion (rising with inflation), then invested; a shortfall is taken from
-// those savings, cash first. A loan's payment goes to savings once it's paid off. Returns { points: one per month from 0 (today) with netWorth, invested, cash,
-// home, other, owed; payoffs: loan id → 'YYYY-MM' }.
+// accounts and savings reach the cushion (rising with inflation), then invested. A shortfall comes out of
+// savings kept as cash, bank accounts, invested savings, then investment accounts (taxed); see below. A
+// loan's payment goes to savings once it's paid off. Returns { points: one per month from 0 (today) with
+// netWorth, invested, cash, home, other, owed, byAccount (account id → balance), byLoan (loan id → balance),
+// savedCash and savedInvested (what the projection has saved, kept as cash and invested); payoffs: loan id →
+// 'YYYY-MM' }.
 export function projectNetWorth(start, settings) {
   const { years, investReturn, cashReturn, homeGrowth, raise, inflation, withdrawalTax = 0 } = settings;
   const g = { invest: growth(investReturn), cash: growth(cashReturn), home: growth(homeGrowth) };
@@ -209,7 +212,14 @@ export function projectNetWorth(start, settings) {
       other: sum('flat'),
       owed: sum('debt') + loans.reduce((s, l) => s + l.balance, 0),
     };
-    return { ...totals, netWorth: totals.invested + totals.cash + totals.home + totals.other - totals.owed };
+    return {
+      ...totals,
+      netWorth: totals.invested + totals.cash + totals.home + totals.other - totals.owed,
+      byAccount: Object.fromEntries(accounts.map((a) => [a.id, a.balance])),
+      byLoan: Object.fromEntries(loans.map((l) => [l.id, l.balance])),
+      savedCash: saved,
+      savedInvested: invested,
+    };
   };
 
   const points = [point(0)];

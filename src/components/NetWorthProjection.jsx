@@ -3,6 +3,7 @@ import { ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, 
 import SummaryCard from './SummaryCard';
 import HelpToggle from './HelpToggle';
 import ProjectionChanges from './ProjectionChanges';
+import ProjectionAccounts from './ProjectionAccounts';
 import { formatCompactCurrency, formatCurrency } from '../constants/categories';
 import { chartTooltipProps } from '../constants/chartTooltip';
 import { currentMonth, formatMonth, formatShortMonth as shortMonth } from '../utils/dates';
@@ -32,6 +33,8 @@ const HELP = {
   cashCushion: 'Savings stay in cash, earning cash interest, until cash reaches this amount (rising with inflation). After that they are invested.',
   holdFlat: 'A held account keeps today’s balance: no growth and no contributions. Useful for crypto, or PTO you’ll use rather than keep.',
 };
+// The by-account table's and the chart picker's groups, in order
+const ACCOUNT_GROUPS = [['invest', 'Investments'], ['cash', 'Bank accounts'], ['home', 'Property'], ['flat', 'Held as they are'], ['owed', 'Owed'], ['saved', 'New savings']];
 // How much each kind of field is nudged to show its effect
 const NUDGE = { rate: 1, monthly: 100, cushion: 10000 };
 
@@ -65,7 +68,7 @@ function ProjectionTooltip({ active, payload }) {
   return (
     <div className="projection-tooltip">
       <div className="projection-tooltip-month">{point.label}</div>
-      <div>Expected: {formatCurrency(Math.round(point.expected))}</div>
+      <div>{point.name}: {formatCurrency(Math.round(point.expected))}</div>
       <div className="muted">Range: {formatCompactCurrency(point.range[0])} – {formatCompactCurrency(point.range[1])}</div>
       {point.events.map((e) => <div key={e} className="projection-tooltip-event">{e}</div>)}
     </div>
@@ -107,6 +110,9 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
   // Typed but not yet saved (fields save when they lose focus, not on every keystroke)
   const [draft, setDraft] = useState({});
   const [todaysDollars, setTodaysDollars] = useState(false);
+  // What the chart shows (net worth, or one account), and whether the by-account table is open
+  const [chartKey, setChartKey] = useState('netWorth');
+  const [showAccounts, setShowAccounts] = useState(false);
   // The one field whose explanation is open, if any
   const [helpOpen, setHelpOpen] = useState(null);
   const helpFor = (key) => ({ open: helpOpen === key, onToggleHelp: () => setHelpOpen((k) => (k === key ? null : key)) });
@@ -193,10 +199,26 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
     return `${perMonth} \u2192 ${payoff}${byEnd(nudged, rates)}`;
   };
 
+  // What can be charted and listed by account: net worth, each account and loan, and what the projection saves;
+  // anything that stays at zero the whole time is left out
+  const nameOf = (id) => accounts.find((a) => a.id === id)?.name || 'A removed account';
+  const total = { key: 'netWorth', name: 'Net worth', value: (p) => p.netWorth };
+  const accountRows = [
+    ...start.accounts.map((a) => ({ key: `acct:${a.id}`, name: nameOf(a.id), group: a.kind === 'debt' ? 'owed' : a.kind, value: (p) => p.byAccount[a.id] })),
+    ...loans.map((l) => ({ key: `loan:${l.id}`, name: l.name, group: 'owed', value: (p) => p.byLoan[l.id] })),
+    { key: 'savedCash', name: 'Saved as cash', group: 'saved', value: (p) => p.savedCash },
+    { key: 'savedInvested', name: 'Saved and invested', group: 'saved', value: (p) => p.savedInvested },
+  ]
+    .filter((r) => expected.points.some((p) => Math.abs(r.value(p)) >= 0.5))
+    .sort((a, b) => Math.abs(b.value(expected.points[0])) - Math.abs(a.value(expected.points[0])));
+  const charted = accountRows.find((r) => r.key === chartKey) || total;
+  const chartValue = (run, m) => deflate(charted.value(run.points[m]), m);
+  const tableYears = [...new Set([0, 5, 10, 20, 30, 40, 50, 60, 70].filter((y) => y < rates.years).concat(rates.years))];
+  const tableColumns = tableYears.map((y) => ({ m: y * 12, label: y === 0 ? 'Today' : expected.points[y * 12].month.slice(0, 4) }));
+
   // Changes inside the projection, numbered for their chart markers; with each loan payoff, what a month's
   // tooltip lists
   const endMonth = expected.points.at(-1).month;
-  const nameOf = (id) => accounts.find((a) => a.id === id)?.name || 'A removed account';
   // Accounts deposits can go into and that can be spent down: the user's own assets
   const changeAccounts = accounts.filter((a) => a.type === 'asset' && !a.auto).map(({ id, name }) => ({ id, name }));
   const marked = changes.filter((c) => c.enabled !== false && c.month > month && c.month <= endMonth).map((c, i) => ({ ...c, n: i + 1 }));
@@ -212,7 +234,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
   for (const at of events.keys()) chartMonths.add(monthsFrom(month, at));
   const chartData = [...chartMonths].sort((a, b) => a - b).map((m) => {
     const p = expected.points[m];
-    return { x: yearPosition(p.month), label: formatMonth(p.month), expected: valueAt(expected, m), range: [valueAt(low, m), valueAt(high, m)], events: events.get(p.month) || [] };
+    return { x: yearPosition(p.month), label: formatMonth(p.month), name: charted.name, expected: chartValue(expected, m), range: [chartValue(low, m), chartValue(high, m)], events: events.get(p.month) || [] };
   });
   const horizons = [...new Set([5, 10, rates.years].filter((y) => y <= rates.years))];
   const milestones = projectionMilestones(expected.points.map((pt, m) => ({ ...pt, netWorth: deflate(pt.netWorth, m) }))).slice(0, 4);
@@ -284,6 +306,20 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
         )}
       </div>
 
+      <div className="projection-chart-pick">
+        <label htmlFor="projection-chart-series">Chart</label>
+        <select id="projection-chart-series" value={charted.key} onChange={(e) => setChartKey(e.target.value)}>
+          <option value={total.key}>{total.name}</option>
+          {ACCOUNT_GROUPS.map(([group, title]) => {
+            const items = accountRows.filter((r) => r.group === group);
+            return items.length > 0 && (
+              <optgroup key={group} label={title}>
+                {items.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}
+              </optgroup>
+            );
+          })}
+        </select>
+      </div>
       <ResponsiveContainer width="100%" height={320} className="projection-chart">
         <ComposedChart data={chartData} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
@@ -306,11 +342,28 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
           ))}
         </ComposedChart>
       </ResponsiveContainer>
-      {milestones.length > 0 && (
+      {milestones.length > 0 && charted === total && (
         <p className="muted projection-milestones">
           {milestones.map((m) => `${formatCompactCurrency(m.amount)} by ${shortMonth(m.month)}`).join(' · ')}
         </p>
       )}
+
+      <div className="projection-accounts">
+        <button className="btn-secondary" onClick={() => setShowAccounts((v) => !v)} aria-expanded={showAccounts}>
+          {showAccounts ? 'Hide' : 'Show'} By Account
+        </button>
+        {showAccounts && (
+          <ProjectionAccounts
+            rows={accountRows}
+            groups={ACCOUNT_GROUPS}
+            columns={tableColumns}
+            valueOf={(row, m) => deflate(row.value(expected.points[m]), m)}
+            total={total}
+            chartedKey={charted.key}
+            onChart={setChartKey}
+          />
+        )}
+      </div>
 
       <h4 className="projection-heading">Assumptions</h4>
       <div className="projection-settings">

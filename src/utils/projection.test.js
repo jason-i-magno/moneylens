@@ -297,6 +297,20 @@ describe('retirement', () => {
   });
 });
 
+describe('by account', () => {
+  it("gives each account's and loan's balance every month, which with the savings add up to net worth", () => {
+    const start = { ...base, takeHome: 2000, spending: 500, cashCushion: 1000,
+      accounts: [{ id: 'k', kind: 'invest', balance: 1000, monthly: 100 }, { id: 'h', kind: 'home', balance: 5000 }, { id: 'card', kind: 'debt', balance: 300 }],
+      loans: [{ id: 'l', balance: 4000, rate: 0, payment: 500, extra: 0, escrow: 0 }] };
+    const { points } = projectNetWorth(start, { ...still, years: 1 });
+    expect(points[3]).toMatchObject({ byAccount: { k: 1300, h: 5000, card: 300 }, byLoan: { l: 2500 }, savedCash: 1000, savedInvested: 2000 });
+    for (const p of points) {
+      const accounts = p.byAccount.k + p.byAccount.h - p.byAccount.card - p.byLoan.l;
+      expect(accounts + p.savedCash + p.savedInvested).toBeCloseTo(p.netWorth, 6);
+    }
+  });
+});
+
 describe('milestones', () => {
   it('finds the first month each round amount above the start is reached', () => {
     const points = [300e3, 420e3, 510e3, 990e3, 1.2e6].map((netWorth, i) => ({ month: `2030-0${i + 1}`, netWorth }));
