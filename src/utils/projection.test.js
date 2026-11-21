@@ -10,8 +10,8 @@ const base = { month: '2026-01', accounts: [], loans: [], takeHome: 0, spending:
 describe('settings', () => {
   it('falls back to the defaults for anything missing or not a number, and keeps years in range', () => {
     expect(resolveProjectionSettings()).toEqual(PROJECTION_DEFAULTS);
-    expect(resolveProjectionSettings({ investReturn: 5, raise: 'x', years: 400 })).toEqual({ ...PROJECTION_DEFAULTS, investReturn: 5, years: 50 });
-    expect(resolveProjectionSettings({ years: 0 }).years).toBe(1);
+    expect(resolveProjectionSettings({ investReturn: 5, raise: 'x', years: 400 })).toEqual({ ...PROJECTION_DEFAULTS, investReturn: 5, years: 70 });
+    expect(resolveProjectionSettings({ years: 0, withdrawalTax: 120 })).toMatchObject({ years: 1, withdrawalTax: 90 });
   });
 });
 
@@ -216,10 +216,10 @@ describe('account deposits and spending an account down', () => {
   });
 
   it('grows deposits with inflation and leaves the money in savings for an account held as it is', () => {
-    const grown = projectNetWorth({ ...base, accounts: [fund], changes: [plan('d', { kind: 'contribution', accountId: 'edu', amount: 100, every: 1 })] }, { ...still, years: 1, inflation: 12 }).points;
+    const grown = projectNetWorth({ ...base, takeHome: 500, cashCushion: 1e9, accounts: [fund], changes: [plan('d', { kind: 'contribution', accountId: 'edu', amount: 100, every: 1 })] }, { ...still, years: 1, inflation: 12 }).points;
     const deposit = 100 * 1.12 ** (2 / 12);
     expect(grown[2].invested - grown[1].invested).toBeCloseTo(deposit, 6); // into the account...
-    expect(grown[2].cash - grown[1].cash).toBeCloseTo(-deposit, 6); // ...out of savings (none here, so cash goes below zero)
+    expect(grown[2].cash - grown[1].cash).toBeCloseTo(500 - deposit, 6); // ...out of what was saved
     const held = projectNetWorth({ ...base, takeHome: 500, accounts: [{ ...fund, kind: 'flat' }], changes: [plan('d', { kind: 'contribution', accountId: 'edu', amount: 100, every: 1, match: 100 })] }, { ...still, years: 1 }).points;
     expect(held[12].other).toBe(1000);
     expect(held[12].netWorth - held[0].netWorth).toBe(12 * 500); // no match either
@@ -261,6 +261,39 @@ describe('account deposits and spending an account down', () => {
     expect(describeChange(plan('s', { kind: 'spendAccount', accountId: 'edu', years: 4 }), nameOf)).toBe('College Fund spent over 4 years from Mar 2026');
     expect(describeChange(plan('t', { kind: 'periodCost', amount: 30000, years: 4, accountId: 'edu', growth: 3.5 }), nameOf))
       .toBe('Cost $30,000 a year for 4 years, paid first from College Fund, rising 3.5% a year from Mar 2026');
+  });
+});
+
+describe('retirement', () => {
+  const change = (id, month, kind, amount) => ({ id, month, kind, amount });
+
+  it("keeps other income coming after paychecks stop, grown with inflation", () => {
+    const start = { ...base, takeHome: 3000, spending: 1000, cashCushion: 1e9,
+      changes: [change('r', '2026-03', 'stopPaychecks'), change('ss', '2026-05', 'income', 1200)] };
+    const { points } = projectNetWorth(start, { ...still, years: 1, inflation: 12 });
+    const month = (m) => points[m].cash - points[m - 1].cash;
+    expect(month(2)).toBeCloseTo(-1000 * 1.12 ** (2 / 12), 6); // March: no paycheck, spending only
+    expect(month(4)).toBeCloseTo(200 * 1.12 ** (4 / 12), 6); // May on: income covers spending, 200 left over
+  });
+
+  it('pays a shortfall from cash savings, bank accounts, invested savings, then investment accounts, taxed', () => {
+    const start = { ...base, spending: 1000, changes: [change('r', '2026-01', 'stopPaychecks')],
+      accounts: [{ id: 'bank', kind: 'cash', balance: 1500 }, { id: 'k1', kind: 'invest', balance: 3000 }, { id: 'k2', kind: 'invest', balance: 1000 }] };
+    const { points } = projectNetWorth(start, { ...still, years: 1, withdrawalTax: 20 });
+    expect(points[1]).toMatchObject({ cash: 500, invested: 4000 });
+    // February: 500 from the bank, then 500 needs 625 out of the 401(k)s, 3:1 between them
+    expect(points[2]).toMatchObject({ cash: 0, invested: 4000 - 625 });
+    expect(points[3].invested).toBeCloseTo(4000 - 625 - 1250, 6);
+    // Once everything is gone, cash goes below zero
+    expect(points[6]).toMatchObject({ invested: 0 });
+    expect(points[6].cash).toBeCloseTo(-(6000 - 1500 - 4000 * 0.8), 6);
+  });
+
+  it('leaves held accounts and the home alone in a shortfall', () => {
+    const start = { ...base, spending: 100, changes: [change('r', '2026-01', 'stopPaychecks')],
+      accounts: [{ id: 'flat', kind: 'flat', balance: 5000 }, { id: 'h', kind: 'home', balance: 9000 }] };
+    const { points } = projectNetWorth(start, { ...still, years: 1, withdrawalTax: 20 });
+    expect(points[12]).toMatchObject({ other: 5000, home: 9000, cash: -1200 });
   });
 });
 

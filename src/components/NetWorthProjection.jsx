@@ -23,6 +23,7 @@ const RATE_FIELDS = [
   { key: 'homeGrowth', label: 'Home value growth (% a year)', step: 0.1, help: "Change in your home's value. Paying the mortgage down adds to your equity on top of this." },
   { key: 'raise', label: 'Raises (% a year)', step: 0.1, help: 'Growth of take-home pay and paycheck contributions. Raises above inflation widen what you save.' },
   { key: 'inflation', label: 'Inflation (% a year)', step: 0.1, help: "Growth of spending and escrow. It's also what “today's dollars” takes back out." },
+  { key: 'withdrawalTax', label: 'Tax on retirement withdrawals (%)', step: 1, help: 'When savings and bank accounts run out (in retirement), spending comes out of investment accounts such as a 401(k), and this share of each withdrawal goes to tax, so more comes out than is spent.' },
 ];
 const HELP = {
   takeHome: 'Everything that comes in each month, after taxes and paycheck deductions. What spending and the mortgage leave is saved.',

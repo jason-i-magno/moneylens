@@ -8,19 +8,21 @@ import { paycheckContributions } from './netWorth';
 import { averageExtraPrincipal } from './mortgageCalculations';
 
 // Rates are % a year. `raise` grows take-home pay and paycheck contributions; `inflation` grows spending
-// (and escrow) and gives the today's-dollars view.
-export const PROJECTION_DEFAULTS = { years: 20, investReturn: 6.5, cashReturn: 3, homeGrowth: 3, raise: 3, inflation: 2.5 };
+// (and escrow) and gives the today's-dollars view. `withdrawalTax` is the share of a withdrawal from an
+// investment account (a 401(k)) that goes to tax.
+export const PROJECTION_DEFAULTS = { years: 20, investReturn: 6.5, cashReturn: 3, homeGrowth: 3, raise: 3, inflation: 2.5, withdrawalTax: 15 };
 const RATE_KEYS = Object.keys(PROJECTION_DEFAULTS);
 // The range drawn around the expected line: investment returns this many points lower and higher, home
 // growth half as many
 export const RANGE_POINTS = 2;
-export const MAX_YEARS = 50;
+export const MAX_YEARS = 70;
 
 // Saved settings (data.netWorth.projection) over the defaults; anything missing or not a number falls back
 export function resolveProjectionSettings(saved = {}) {
   const out = { ...PROJECTION_DEFAULTS };
   for (const key of RATE_KEYS) if (Number.isFinite(saved[key])) out[key] = saved[key];
   out.years = Math.min(MAX_YEARS, Math.max(1, Math.round(out.years)));
+  out.withdrawalTax = Math.min(90, Math.max(0, out.withdrawalTax));
   return out;
 }
 
@@ -101,7 +103,8 @@ const growth = (pct) => (1 + pct / 100) ** (1 / 12);
 // Future changes (netWorth.projection.changes): from `month` on, take-home or spending goes up (+) or down
 // (-) by `amount` a month; or pay rises by `amount` percent (a promotion: paycheck contributions rise by all
 // of it, take-home by RAISE_TAKE_HOME_SHARE of it); or `amount` comes in (+) or goes out (-) once that month;
-// or paychecks stop (take-home and paycheck contributions). Two act on one account (`accountId`):
+// or paychecks stop (take-home and paycheck contributions); or other income of `amount` a month starts
+// (after tax: Social Security, a pension), which paychecks stopping doesn't stop. Two act on one account (`accountId`):
 // 'contribution' deposits `amount` into it every `every` months from `month`, `times` times (or for good),
 // out of what's saved, plus a `match` (% of each deposit) from outside, like a state or employer match;
 // 'spendAccount' spends its balance down evenly over `years` from `month`: that money leaves net worth.
@@ -109,7 +112,7 @@ const growth = (pct) => (1 + pct / 100) ** (1 / 12);
 // the account `accountId` if given (a 529) and the rest from savings; it rises by `growth` % a year if given,
 // else with inflation. Dollar amounts are in today's dollars and grow like what they change: take-home with
 // raises, spending, one-time amounts and deposits with inflation.
-export const CHANGE_KINDS = ['takeHome', 'payRaise', 'spending', 'oneTime', 'stopPaychecks', 'contribution', 'spendAccount', 'periodCost'];
+export const CHANGE_KINDS = ['takeHome', 'payRaise', 'spending', 'oneTime', 'stopPaychecks', 'income', 'contribution', 'spendAccount', 'periodCost'];
 export const DEPOSIT_EVERY = [1, 3, 6, 12];
 // A raise is taxed at the top rate, above the average rate on all of pay, so take-home grows by less than
 // the raise: about 85% of it for a typical salaried household (federal 22-24%, FICA, a state tax, a 401(k)
@@ -137,6 +140,7 @@ export function changeEffectText(c, nameOf = () => 'An account') {
     return `Cost ${dollars(c.amount)} a year for ${c.years} year${c.years !== 1 ? 's' : ''}${from}${growth}`;
   }
   if (c.kind === 'stopPaychecks') return 'Paychecks stop';
+  if (c.kind === 'income') return `Income ${signed(c.amount)} a month`;
   if (c.kind === 'oneTime') return `One-time ${signed(c.amount)}`;
   if (c.kind === 'payRaise') return `Pay ${c.amount < 0 ? '\u2212' : '+'}${Math.abs(c.amount)}%`;
   return `${c.kind === 'takeHome' ? 'Take-home' : 'Spending'} ${signed(c.amount)} a month`;
@@ -154,6 +158,7 @@ const wellFormed = {
   spending: (c) => Number.isFinite(c.amount),
   oneTime: (c) => Number.isFinite(c.amount),
   stopPaychecks: () => true,
+  income: (c) => Number.isFinite(c.amount),
   contribution: (c) => typeof c.accountId === 'string' && c.amount > 0 && DEPOSIT_EVERY.includes(c.every)
     && (c.times === undefined || (Number.isInteger(c.times) && c.times > 0)) && (c.match === undefined || c.match >= 0),
   spendAccount: (c) => typeof c.accountId === 'string' && Number.isFinite(c.years) && c.years > 0,
@@ -181,7 +186,7 @@ export function resolveChanges(list) {
 // those savings, cash first. A loan's payment goes to savings once it's paid off. Returns { points: one per month from 0 (today) with netWorth, invested, cash,
 // home, other, owed; payoffs: loan id → 'YYYY-MM' }.
 export function projectNetWorth(start, settings) {
-  const { years, investReturn, cashReturn, homeGrowth, raise, inflation } = settings;
+  const { years, investReturn, cashReturn, homeGrowth, raise, inflation, withdrawalTax = 0 } = settings;
   const g = { invest: growth(investReturn), cash: growth(cashReturn), home: growth(homeGrowth) };
   const gPay = growth(raise);
   const gLiving = growth(inflation);
@@ -228,7 +233,7 @@ export function projectNetWorth(start, settings) {
     const takeHome = paid ? Math.max(0, start.takeHome * takeHomeRaise + monthlyChange('takeHome')) * pay : 0;
     const spending = Math.max(0, start.spending + monthlyChange('spending')) * living;
     const once = changes.reduce((s, c) => s + (c.kind === 'oneTime' && c.month === month ? c.amount : 0), 0) * living;
-    let surplus = takeHome - spending + once;
+    let surplus = takeHome - spending + once + monthlyChange('income') * living;
 
     // Deposits into an account come out of what's saved (a match comes from outside); an account held as
     // it is gets none, so the money stays in savings
@@ -283,15 +288,27 @@ export function projectNetWorth(start, settings) {
       saved += toCash;
       invested += surplus - toCash;
     } else {
-      // A shortfall (after paychecks stop, say) comes out of savings kept as cash, then invested savings;
-      // beyond that cash goes below zero
+      // A shortfall (in retirement, say) comes out of savings kept as cash, then bank accounts, then
+      // invested savings, then investment accounts in proportion to their balances, where tax takes
+      // `withdrawalTax` % of each withdrawal; beyond all that, cash goes below zero
       let need = -surplus;
-      const fromCash = Math.min(need, Math.max(saved, 0));
-      saved -= fromCash;
-      need -= fromCash;
-      const fromInvested = Math.min(need, invested);
-      invested -= fromInvested;
-      saved -= need - fromInvested;
+      const take = (available) => {
+        const amount = Math.min(need, Math.max(available, 0));
+        need -= amount;
+        return amount;
+      };
+      saved -= take(saved);
+      for (const a of accounts) if (a.kind === 'cash') a.balance -= take(a.balance);
+      invested -= take(invested);
+      const pool = accounts.filter((a) => a.kind === 'invest' && a.balance > 0);
+      const total = pool.reduce((s, a) => s + a.balance, 0);
+      if (need > 0 && total > 0) {
+        const keep = 1 - withdrawalTax / 100;
+        const out = Math.min(need / keep, total);
+        for (const a of pool) a.balance -= out * (a.balance / total);
+        need -= out * keep;
+      }
+      saved -= need;
     }
     points.push(point(m));
   }

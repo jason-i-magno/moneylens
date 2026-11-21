@@ -17,6 +17,7 @@ const CHANGE_TYPES = [
   { id: 'contribution', label: 'Regular deposits into an account', kind: 'contribution' },
   { id: 'spendAccount', label: 'Spend an account down', kind: 'spendAccount' },
   { id: 'stopPaychecks', label: 'Paychecks stop (retirement)', kind: 'stopPaychecks' },
+  { id: 'income', label: 'Other income starts (Social Security, a pension)', kind: 'income', sign: 1 },
 ];
 const EVERY_OPTIONS = [
   { months: 1, label: 'Every month' },
@@ -31,7 +32,8 @@ const HELP = 'Changes you expect, from a month on: take-home pay or spending goi
   + 'take-home by about 85% of it, since a raise is taxed at your top rate), a one-time amount in or out (a car, an inheritance), '
   + 'a cost for several years (college: paid first from an account such as a 529, the rest from what you save, rising by its own rate '
   + 'or with inflation), regular deposits into an account (a 529: they come out of what you save, and a match is added on top), '
-  + 'spending an account down over some years (that money leaves your net worth), or paychecks stopping when you retire, which also '
+  + 'spending an account down over some years (that money leaves your net worth), other income starting (Social Security or a '
+  + 'pension, after tax, rising with inflation and still paid after your paychecks stop), or paychecks stopping when you retire, which also '
   + 'stops paycheck contributions. Dollar amounts are in today’s dollars: they grow with raises (take-home) or inflation (everything '
   + 'else), like the rest of the projection. Untick a change to see the projection without it.';
 
@@ -97,6 +99,7 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
     payRaise: 'Raise (% of pay)',
     contribution: 'Each deposit (today’s dollars)',
     periodCost: 'Cost a year (today’s dollars)',
+    income: 'Income a month, after tax (today’s dollars)',
     oneTime: 'Amount (today’s dollars)',
   }[kind] || 'By how much a month (today’s dollars)';
   const startLabel = { oneTime: 'In', contribution: 'First deposit' }[kind] || 'Starting';
