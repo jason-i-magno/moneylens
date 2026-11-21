@@ -13,8 +13,9 @@ const CHANGE_TYPES = [
   { id: 'spendingDown', label: 'Spending drops', kind: 'spending', sign: -1 },
   { id: 'oneTimeOut', label: 'One-time cost', kind: 'oneTime', sign: -1 },
   { id: 'oneTimeIn', label: 'One-time money in', kind: 'oneTime', sign: 1 },
+  { id: 'periodCost', label: 'A cost for several years (e.g. college)', kind: 'periodCost' },
   { id: 'contribution', label: 'Regular deposits into an account', kind: 'contribution' },
-  { id: 'spendAccount', label: 'Spend an account down (e.g. college)', kind: 'spendAccount' },
+  { id: 'spendAccount', label: 'Spend an account down', kind: 'spendAccount' },
   { id: 'stopPaychecks', label: 'Paychecks stop (retirement)', kind: 'stopPaychecks' },
 ];
 const EVERY_OPTIONS = [
@@ -28,8 +29,9 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const HELP = 'Changes you expect, from a month on: take-home pay or spending going up or down (a dependent no longer qualifying for '
   + 'tax credits, childcare starting or ending), pay rising by a percentage (a promotion: paycheck contributions rise by all of it, '
   + 'take-home by about 85% of it, since a raise is taxed at your top rate), a one-time amount in or out (a car, an inheritance), '
-  + 'regular deposits into an account (a 529: they come out of what you save, and a match is added on top), spending an account '
-  + 'down over some years (a 529 on college: that money leaves your net worth), or paychecks stopping when you retire, which also '
+  + 'a cost for several years (college: paid first from an account such as a 529, the rest from what you save, rising by its own rate '
+  + 'or with inflation), regular deposits into an account (a 529: they come out of what you save, and a match is added on top), '
+  + 'spending an account down over some years (that money leaves your net worth), or paychecks stopping when you retire, which also '
   + 'stops paycheck contributions. Dollar amounts are in today’s dollars: they grow with raises (take-home) or inflation (everything '
   + 'else), like the rest of the projection. Untick a change to see the projection without it.';
 
@@ -42,7 +44,7 @@ const ACCOUNT_KINDS = ['contribution', 'spendAccount'];
 export default function ProjectionChanges({ changes, accounts = [], endMonth, markerNumbers = {}, open, onToggleHelp, onSave }) {
   const [form, setForm] = useState(() => ({
     type: 'takeHomeDown', amount: '', month: '01', year: String(Number(currentMonth().slice(0, 4)) + 1), label: '',
-    accountId: '', every: '12', times: '', match: '', years: '4',
+    accountId: '', every: '12', times: '', match: '', years: '4', payFrom: '', growth: '',
   }));
   const type = CHANGE_TYPES.find((t) => t.id === form.type);
   const kind = type.kind;
@@ -51,6 +53,7 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
   const times = form.times.trim() ? Number(form.times) : undefined;
   const match = form.match.trim() ? Number(form.match) : undefined;
   const years = Number(form.years);
+  const growth = form.growth.trim() ? Number(form.growth) : undefined;
   const accountId = form.accountId || accounts[0]?.id || '';
   const nameOf = (id) => accounts.find((a) => a.id === id)?.name || 'A removed account';
 
@@ -58,6 +61,7 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
     stopPaychecks: true,
     contribution: !!accountId && amount > 0 && (times === undefined || (Number.isInteger(times) && times > 0)) && (match === undefined || match >= 0),
     spendAccount: !!accountId && years > 0,
+    periodCost: amount > 0 && years > 0 && (growth === undefined || Number.isFinite(growth)),
   };
   const valid = Number.isInteger(year) && year >= 1900 && year <= 2200 && (validFor[kind] ?? amount > 0);
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -72,12 +76,16 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
       if (match) change.match = match;
     } else if (kind === 'spendAccount') {
       change.years = years;
+    } else if (kind === 'periodCost') {
+      Object.assign(change, { amount, years });
+      if (form.payFrom) change.accountId = form.payFrom;
+      if (growth !== undefined) change.growth = growth;
     } else if (kind !== 'stopPaychecks') {
       change.amount = type.sign * amount;
     }
     if (form.label.trim()) change.label = form.label.trim().slice(0, 60);
     onSave({ changes: [...changes, change] });
-    setForm((f) => ({ ...f, amount: '', label: '', times: '', match: '' }));
+    setForm((f) => ({ ...f, amount: '', label: '', times: '', match: '', growth: '' }));
   };
   const toggle = (id) => onSave({ changes: changes.map((c) => (c.id === id ? { ...c, enabled: c.enabled === false } : c)) });
   const remove = (id) => {
@@ -88,6 +96,7 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
   const amountLabel = {
     payRaise: 'Raise (% of pay)',
     contribution: 'Each deposit (today’s dollars)',
+    periodCost: 'Cost a year (today’s dollars)',
     oneTime: 'Amount (today’s dollars)',
   }[kind] || 'By how much a month (today’s dollars)';
   const startLabel = { oneTime: 'In', contribution: 'First deposit' }[kind] || 'Starting';
@@ -162,6 +171,25 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
             <label>Over how many years</label>
             <input type="number" min="1" step="1" value={form.years} onChange={set('years')} />
           </div>
+        )}
+        {kind === 'periodCost' && (
+          <>
+            <div className="form-group">
+              <label>For how many years</label>
+              <input type="number" min="1" step="1" value={form.years} onChange={set('years')} />
+            </div>
+            <div className="form-group">
+              <label>Paid first from</label>
+              <select value={form.payFrom} onChange={set('payFrom')}>
+                <option value="">Savings only</option>
+                {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Rises (% a year, blank: inflation)</label>
+              <input type="number" step="0.1" value={form.growth} onChange={set('growth')} placeholder="3.5" />
+            </div>
+          </>
         )}
         <div className="form-group">
           <label>{startLabel}</label>

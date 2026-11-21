@@ -104,10 +104,12 @@ const growth = (pct) => (1 + pct / 100) ** (1 / 12);
 // or paychecks stop (take-home and paycheck contributions). Two act on one account (`accountId`):
 // 'contribution' deposits `amount` into it every `every` months from `month`, `times` times (or for good),
 // out of what's saved, plus a `match` (% of each deposit) from outside, like a state or employer match;
-// 'spendAccount' spends its balance down evenly over `years` from `month` (a 529 on college): that money
-// leaves net worth. Dollar amounts are in today's dollars and grow like what they change: take-home with
+// 'spendAccount' spends its balance down evenly over `years` from `month`: that money leaves net worth.
+// 'periodCost' is a cost of `amount` a year for `years` from `month` (college), paid each month first from
+// the account `accountId` if given (a 529) and the rest from savings; it rises by `growth` % a year if given,
+// else with inflation. Dollar amounts are in today's dollars and grow like what they change: take-home with
 // raises, spending, one-time amounts and deposits with inflation.
-export const CHANGE_KINDS = ['takeHome', 'payRaise', 'spending', 'oneTime', 'stopPaychecks', 'contribution', 'spendAccount'];
+export const CHANGE_KINDS = ['takeHome', 'payRaise', 'spending', 'oneTime', 'stopPaychecks', 'contribution', 'spendAccount', 'periodCost'];
 export const DEPOSIT_EVERY = [1, 3, 6, 12];
 // A raise is taxed at the top rate, above the average rate on all of pay, so take-home grows by less than
 // the raise: about 85% of it for a typical salaried household (federal 22-24%, FICA, a state tax, a 401(k)
@@ -129,6 +131,11 @@ export function changeEffectText(c, nameOf = () => 'An account') {
     return `${nameOf(c.accountId)} +${dollars(c.amount)} ${EVERY_TEXT[c.every]}${c.match ? `, matched ${c.match}%` : ''}${times}`;
   }
   if (c.kind === 'spendAccount') return `${nameOf(c.accountId)} spent over ${c.years} year${c.years !== 1 ? 's' : ''}`;
+  if (c.kind === 'periodCost') {
+    const from = c.accountId ? `, paid first from ${nameOf(c.accountId)}` : '';
+    const growth = Number.isFinite(c.growth) ? `, rising ${c.growth}% a year` : '';
+    return `Cost ${dollars(c.amount)} a year for ${c.years} year${c.years !== 1 ? 's' : ''}${from}${growth}`;
+  }
   if (c.kind === 'stopPaychecks') return 'Paychecks stop';
   if (c.kind === 'oneTime') return `One-time ${signed(c.amount)}`;
   if (c.kind === 'payRaise') return `Pay ${c.amount < 0 ? '\u2212' : '+'}${Math.abs(c.amount)}%`;
@@ -150,6 +157,8 @@ const wellFormed = {
   contribution: (c) => typeof c.accountId === 'string' && c.amount > 0 && DEPOSIT_EVERY.includes(c.every)
     && (c.times === undefined || (Number.isInteger(c.times) && c.times > 0)) && (c.match === undefined || c.match >= 0),
   spendAccount: (c) => typeof c.accountId === 'string' && Number.isFinite(c.years) && c.years > 0,
+  periodCost: (c) => c.amount > 0 && Number.isFinite(c.years) && c.years > 0
+    && (c.accountId === undefined || typeof c.accountId === 'string') && (c.growth === undefined || Number.isFinite(c.growth)),
 };
 export function resolveChanges(list) {
   if (!Array.isArray(list)) return [];
@@ -231,6 +240,21 @@ export function projectNetWorth(start, settings) {
       const deposit = c.amount * living;
       account.balance += deposit * (1 + (c.match || 0) / 100);
       surplus -= deposit;
+    }
+    // A cost over several years: a twelfth of the year's cost each month, from the account first
+    for (const c of changes) {
+      if (c.kind !== 'periodCost') continue;
+      const k = monthIndex(month) - monthIndex(c.month);
+      if (k < 0 || k >= Math.round(c.years * 12)) continue;
+      const grown = Number.isFinite(c.growth) ? (1 + c.growth / 100) ** (m / 12) : living;
+      let cost = (c.amount / 12) * grown;
+      const account = c.accountId && accounts.find((a) => a.id === c.accountId && a.kind !== 'debt');
+      if (account && account.balance > 0) {
+        const fromAccount = Math.min(cost, account.balance);
+        account.balance -= fromAccount;
+        cost -= fromAccount;
+      }
+      surplus -= cost;
     }
     // An account spent down: an even share of what's left each month until the last month, then nothing
     for (const c of changes) {

@@ -235,11 +235,32 @@ describe('account deposits and spending an account down', () => {
     expect(points[36].invested).toBe(0);
   });
 
+  it('pays a cost over several years from the account first, then savings, all of it leaving net worth', () => {
+    // Savings stay in cash (a big cushion), so `invested` is the account alone
+    const start = { ...base, takeHome: 2000, cashCushion: 1e9, accounts: [{ ...fund, balance: 3000 }],
+      changes: [plan('c', { kind: 'periodCost', amount: 12000, years: 1, accountId: 'edu' })] };
+    const { points } = projectNetWorth(start, { ...still, years: 2 });
+    expect(points[2]).toMatchObject({ invested: 2000, cash: 4000 }); // March: 1,000 from the account
+    expect(points[4]).toMatchObject({ invested: 0, cash: 8000 }); // the account is empty after May
+    expect(points[5]).toMatchObject({ invested: 0, cash: 9000 }); // June on: 1,000 a month from savings
+    expect(points[13].netWorth - points[1].netWorth).toBe(12 * 2000 - 12000); // 12 months of cost, all of it gone
+    expect(points[14].netWorth - points[13].netWorth).toBe(2000); // and no more after
+  });
+
+  it('grows a cost by its own rate, else inflation, and needs no account', () => {
+    const own = projectNetWorth({ ...base, changes: [plan('c', { kind: 'periodCost', amount: 1200, years: 1, growth: 12 })] }, { ...still, years: 1, inflation: 2 }).points;
+    expect(own[2].netWorth - own[1].netWorth).toBeCloseTo(-100 * 1.12 ** (2 / 12), 6);
+    const infl = projectNetWorth({ ...base, changes: [plan('c', { kind: 'periodCost', amount: 1200, years: 1 })] }, { ...still, years: 1, inflation: 12 }).points;
+    expect(infl[2].netWorth - infl[1].netWorth).toBeCloseTo(-100 * 1.12 ** (2 / 12), 6);
+  });
+
   it('names the account in descriptions', () => {
     const nameOf = (id) => ({ edu: 'College Fund' })[id];
     expect(describeChange(plan('d', { kind: 'contribution', accountId: 'edu', amount: 500, every: 12, times: 3, match: 100 }), nameOf))
       .toBe('College Fund +$500 a year, matched 100%, 3 times from Mar 2026');
     expect(describeChange(plan('s', { kind: 'spendAccount', accountId: 'edu', years: 4 }), nameOf)).toBe('College Fund spent over 4 years from Mar 2026');
+    expect(describeChange(plan('t', { kind: 'periodCost', amount: 30000, years: 4, accountId: 'edu', growth: 3.5 }), nameOf))
+      .toBe('Cost $30,000 a year for 4 years, paid first from College Fund, rising 3.5% a year from Mar 2026');
   });
 });
 
