@@ -101,9 +101,14 @@ const growth = (pct) => (1 + pct / 100) ** (1 / 12);
 // Future changes (netWorth.projection.changes): from `month` on, take-home or spending goes up (+) or down
 // (-) by `amount` a month; or pay rises by `amount` percent (a promotion: paycheck contributions rise by all
 // of it, take-home by RAISE_TAKE_HOME_SHARE of it); or `amount` comes in (+) or goes out (-) once that month;
-// or paychecks stop (take-home and paycheck contributions). Dollar amounts are in today's dollars and grow
-// like what they change: take-home with raises, spending and one-time amounts with inflation.
-export const CHANGE_KINDS = ['takeHome', 'payRaise', 'spending', 'oneTime', 'stopPaychecks'];
+// or paychecks stop (take-home and paycheck contributions). Two act on one account (`accountId`):
+// 'contribution' deposits `amount` into it every `every` months from `month`, `times` times (or for good),
+// out of what's saved, plus a `match` (% of each deposit) from outside, like a state or employer match;
+// 'spendAccount' spends its balance down evenly over `years` from `month` (a 529 on college): that money
+// leaves net worth. Dollar amounts are in today's dollars and grow like what they change: take-home with
+// raises, spending, one-time amounts and deposits with inflation.
+export const CHANGE_KINDS = ['takeHome', 'payRaise', 'spending', 'oneTime', 'stopPaychecks', 'contribution', 'spendAccount'];
+export const DEPOSIT_EVERY = [1, 3, 6, 12];
 // A raise is taxed at the top rate, above the average rate on all of pay, so take-home grows by less than
 // the raise: about 85% of it for a typical salaried household (federal 22-24%, FICA, a state tax, a 401(k)
 // percentage). Paycheck contributions that are a percentage of pay grow by all of it.
@@ -111,10 +116,19 @@ export const RAISE_TAKE_HOME_SHARE = 0.85;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 const dollars = (n) => formatCurrency(Math.abs(n)).replace(/\.00$/, '');
+const EVERY_TEXT = { 1: 'a month', 3: 'a quarter', 6: 'twice a year', 12: 'a year' };
+const monthIndex = (month) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1;
+const isMonth = (m) => typeof m === 'string' && MONTH_RE.test(m);
 const signed = (n) => `${n < 0 ? '\u2212' : '+'}${dollars(n)}`;
 
-// What a change does, without when: 'Take-home −$500 a month', 'Pay +8%', 'One-time −$30,000', 'Paychecks stop'
-export function changeEffectText(c) {
+// What a change does, without when: 'Take-home −$500 a month', 'Pay +8%', 'One-time −$30,000', 'Paychecks stop',
+// '529 +$500 a year, matched 100%, 3 times', '529 spent over 4 years'. `nameOf(accountId)` names accounts.
+export function changeEffectText(c, nameOf = () => 'An account') {
+  if (c.kind === 'contribution') {
+    const times = c.times ? `, ${c.times} time${c.times !== 1 ? 's' : ''}` : '';
+    return `${nameOf(c.accountId)} +${dollars(c.amount)} ${EVERY_TEXT[c.every]}${c.match ? `, matched ${c.match}%` : ''}${times}`;
+  }
+  if (c.kind === 'spendAccount') return `${nameOf(c.accountId)} spent over ${c.years} year${c.years !== 1 ? 's' : ''}`;
   if (c.kind === 'stopPaychecks') return 'Paychecks stop';
   if (c.kind === 'oneTime') return `One-time ${signed(c.amount)}`;
   if (c.kind === 'payRaise') return `Pay ${c.amount < 0 ? '\u2212' : '+'}${Math.abs(c.amount)}%`;
@@ -122,25 +136,25 @@ export function changeEffectText(c) {
 }
 
 // 'Take-home −$500 a month from Jun 2040', 'One-time −$30,000 in Mar 2031', 'Paychecks stop from Jan 2055'
-export function describeChange(c) {
-  return `${changeEffectText(c)} ${c.kind === 'oneTime' ? 'in' : 'from'} ${formatShortMonth(c.month)}`;
-}
-
-// A few words for the chart: the change's own description, else what kind of change it is
-export function changeTitle(c) {
-  if (c.label) return c.label;
-  if (c.kind === 'stopPaychecks') return 'Paychecks stop';
-  if (c.kind === 'oneTime') return c.amount < 0 ? 'One-time cost' : 'Money in';
-  if (c.kind === 'payRaise') return c.amount < 0 ? 'Pay cut' : 'Pay rises';
-  return `${c.kind === 'takeHome' ? 'Take-home' : 'Spending'} ${c.amount < 0 ? 'drops' : 'rises'}`;
+export function describeChange(c, nameOf) {
+  return `${changeEffectText(c, nameOf)} ${c.kind === 'oneTime' ? 'in' : 'from'} ${formatShortMonth(c.month)}`;
 }
 
 // The saved changes that are well formed; `enabled: false` ones are kept (the list shows them) but marked
+const wellFormed = {
+  takeHome: (c) => Number.isFinite(c.amount),
+  payRaise: (c) => Number.isFinite(c.amount),
+  spending: (c) => Number.isFinite(c.amount),
+  oneTime: (c) => Number.isFinite(c.amount),
+  stopPaychecks: () => true,
+  contribution: (c) => typeof c.accountId === 'string' && c.amount > 0 && DEPOSIT_EVERY.includes(c.every)
+    && (c.times === undefined || (Number.isInteger(c.times) && c.times > 0)) && (c.match === undefined || c.match >= 0),
+  spendAccount: (c) => typeof c.accountId === 'string' && Number.isFinite(c.years) && c.years > 0,
+};
 export function resolveChanges(list) {
   if (!Array.isArray(list)) return [];
   return list
-    .filter((c) => c && typeof c.id === 'string' && MONTH_RE.test(c.month) && CHANGE_KINDS.includes(c.kind)
-      && (c.kind === 'stopPaychecks' || Number.isFinite(c.amount)))
+    .filter((c) => c && typeof c.id === 'string' && isMonth(c.month) && Object.hasOwn(wellFormed, c.kind) && wellFormed[c.kind](c))
     .sort((a, b) => a.month.localeCompare(b.month));
 }
 
@@ -206,6 +220,27 @@ export function projectNetWorth(start, settings) {
     const spending = Math.max(0, start.spending + monthlyChange('spending')) * living;
     const once = changes.reduce((s, c) => s + (c.kind === 'oneTime' && c.month === month ? c.amount : 0), 0) * living;
     let surplus = takeHome - spending + once;
+
+    // Deposits into an account come out of what's saved (a match comes from outside); an account held as
+    // it is gets none, so the money stays in savings
+    for (const c of changes) {
+      if (c.kind !== 'contribution') continue;
+      const account = accounts.find((a) => a.id === c.accountId && g[a.kind] && a.kind !== 'home');
+      const k = monthIndex(month) - monthIndex(c.month);
+      if (!account || k < 0 || k % c.every !== 0 || (c.times && k / c.every >= c.times)) continue;
+      const deposit = c.amount * living;
+      account.balance += deposit * (1 + (c.match || 0) / 100);
+      surplus -= deposit;
+    }
+    // An account spent down: an even share of what's left each month until the last month, then nothing
+    for (const c of changes) {
+      if (c.kind !== 'spendAccount') continue;
+      const account = accounts.find((a) => a.id === c.accountId && a.kind !== 'debt');
+      const left = monthIndex(c.month) + Math.round(c.years * 12) - monthIndex(month);
+      const started = monthIndex(month) >= monthIndex(c.month);
+      if (!account || !started) continue;
+      account.balance -= left > 0 ? account.balance / left : account.balance;
+    }
     for (const loan of loans) {
       surplus -= (loan.escrow || 0) * living; // taxes and insurance, still owed once the loan is paid off
       if (loan.balance <= 0) continue;

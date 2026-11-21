@@ -189,6 +189,60 @@ describe('future changes', () => {
   });
 });
 
+describe('account deposits and spending an account down', () => {
+  const plan = (id, extra) => ({ id, month: '2026-03', ...extra });
+  const fund = { id: 'edu', kind: 'invest', balance: 1000 };
+
+  it('keeps only well-formed account changes', () => {
+    const list = [
+      plan('ok1', { kind: 'contribution', accountId: 'edu', amount: 500, every: 12, times: 3, match: 100 }),
+      plan('ok2', { kind: 'spendAccount', accountId: 'edu', years: 4 }),
+      plan('bad1', { kind: 'contribution', accountId: 'edu', amount: 500, every: 5 }),
+      plan('bad2', { kind: 'contribution', amount: 500, every: 12 }),
+      plan('bad3', { kind: 'contribution', accountId: 'edu', amount: 500, every: 12, times: 0 }),
+      plan('bad4', { kind: 'spendAccount', accountId: 'edu', years: 0 }),
+    ];
+    expect(resolveChanges(list).map((c) => c.id)).toEqual(['ok1', 'ok2']);
+  });
+
+  it('deposits on schedule out of savings, a limited number of times, with a match from outside', () => {
+    const start = { ...base, accounts: [fund], takeHome: 2000, spending: 1000,
+      changes: [plan('d', { kind: 'contribution', accountId: 'edu', amount: 300, every: 6, times: 2, match: 50 })] };
+    const { points } = projectNetWorth(start, { ...still, years: 2 });
+    // Months 1 (Feb) nothing; 2 (Mar) first deposit; 8 (Sep) second; 14 (Mar) none: two times only
+    expect(points[2].netWorth - points[1].netWorth).toBe(1000 + 150); // 1,000 saved a month, of which 300 deposited, plus the 150 match
+    expect(points[8].netWorth - points[7].netWorth).toBe(1150);
+    expect(points[14].netWorth - points[13].netWorth).toBe(1000);
+  });
+
+  it('grows deposits with inflation and leaves the money in savings for an account held as it is', () => {
+    const grown = projectNetWorth({ ...base, accounts: [fund], changes: [plan('d', { kind: 'contribution', accountId: 'edu', amount: 100, every: 1 })] }, { ...still, years: 1, inflation: 12 }).points;
+    const deposit = 100 * 1.12 ** (2 / 12);
+    expect(grown[2].invested - grown[1].invested).toBeCloseTo(deposit, 6); // into the account...
+    expect(grown[2].cash - grown[1].cash).toBeCloseTo(-deposit, 6); // ...out of savings (none here, so cash goes below zero)
+    const held = projectNetWorth({ ...base, takeHome: 500, accounts: [{ ...fund, kind: 'flat' }], changes: [plan('d', { kind: 'contribution', accountId: 'edu', amount: 100, every: 1, match: 100 })] }, { ...still, years: 1 }).points;
+    expect(held[12].other).toBe(1000);
+    expect(held[12].netWorth - held[0].netWorth).toBe(12 * 500); // no match either
+  });
+
+  it('spends an account down evenly over the years given, then leaves it empty', () => {
+    const start = { ...base, accounts: [{ ...fund, balance: 4800 }], changes: [plan('s', { kind: 'spendAccount', accountId: 'edu', years: 2 })] };
+    const { points } = projectNetWorth(start, { ...still, years: 3 });
+    expect(points[1].invested).toBe(4800);
+    expect(points[2].invested).toBeCloseTo(4600, 6); // March: 1/24 of it
+    expect(points[13].invested).toBeCloseTo(2400, 6); // half way
+    expect(points[25].invested).toBeCloseTo(0, 6); // the 24th month
+    expect(points[36].invested).toBe(0);
+  });
+
+  it('names the account in descriptions', () => {
+    const nameOf = (id) => ({ edu: 'College Fund' })[id];
+    expect(describeChange(plan('d', { kind: 'contribution', accountId: 'edu', amount: 500, every: 12, times: 3, match: 100 }), nameOf))
+      .toBe('College Fund +$500 a year, matched 100%, 3 times from Mar 2026');
+    expect(describeChange(plan('s', { kind: 'spendAccount', accountId: 'edu', years: 4 }), nameOf)).toBe('College Fund spent over 4 years from Mar 2026');
+  });
+});
+
 describe('milestones', () => {
   it('finds the first month each round amount above the start is reached', () => {
     const points = [300e3, 420e3, 510e3, 990e3, 1.2e6].map((netWorth, i) => ({ month: `2030-0${i + 1}`, netWorth }));

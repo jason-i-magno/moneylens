@@ -7,7 +7,7 @@ import { formatCompactCurrency, formatCurrency } from '../constants/categories';
 import { chartTooltipProps } from '../constants/chartTooltip';
 import { currentMonth, formatMonth, formatShortMonth as shortMonth } from '../utils/dates';
 import {
-  RANGE_POINTS, cashFlowBaseline, changeEffectText, changeTitle, resolveChanges, monthlyPaycheckContribution, projectNetWorth, projectionLoans,
+  RANGE_POINTS, cashFlowBaseline, changeEffectText, resolveChanges, monthlyPaycheckContribution, projectNetWorth, projectionLoans,
   projectionMilestones, resolveProjectionSettings,
 } from '../utils/projection';
 
@@ -195,11 +195,14 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
   // Changes inside the projection, numbered for their chart markers; with each loan payoff, what a month's
   // tooltip lists
   const endMonth = expected.points.at(-1).month;
+  const nameOf = (id) => accounts.find((a) => a.id === id)?.name || 'A removed account';
+  // Accounts deposits can go into and that can be spent down: the user's own assets
+  const changeAccounts = accounts.filter((a) => a.type === 'asset' && !a.auto).map(({ id, name }) => ({ id, name }));
   const marked = changes.filter((c) => c.enabled !== false && c.month > month && c.month <= endMonth).map((c, i) => ({ ...c, n: i + 1 }));
   const markerNumbers = Object.fromEntries(marked.map((c) => [c.id, c.n]));
   const events = new Map();
   const addEvent = (at, text) => events.set(at, [...(events.get(at) || []), text]);
-  for (const c of marked) addEvent(c.month, `${c.n}. ${c.label || changeTitle(c)}: ${changeEffectText(c)}`);
+  for (const c of marked) addEvent(c.month, `${c.n}. ${c.label ? `${c.label}: ` : ''}${changeEffectText(c, nameOf)}`);
   for (const l of loans) if (expected.payoffs[l.id]) addEvent(expected.payoffs[l.id], loans.length > 1 ? `${l.name} paid off` : 'Mortgage paid off');
 
   // A point every year, plus one at each event's month so hovering a marker shows that month
@@ -367,7 +370,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
           to use the payments actually made.
         </p>
       )}
-      <ProjectionChanges changes={changes} endMonth={endMonth} markerNumbers={markerNumbers} {...helpFor('changes')} onSave={onSave} />
+      <ProjectionChanges changes={changes} accounts={changeAccounts} endMonth={endMonth} markerNumbers={markerNumbers} {...helpFor('changes')} onSave={onSave} />
       {flatCandidates.length > 0 && (
         <div className="projection-flat">
           <span className="muted">Hold as they are:</span>
