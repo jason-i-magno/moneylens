@@ -108,7 +108,7 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const dollars = (n) => formatCurrency(Math.abs(n)).replace(/\.00$/, '');
 const signed = (n) => `${n < 0 ? '\u2212' : '+'}${dollars(n)}`;
 
-// 'Take-home −$525 a month from Jun 2040', 'One-time −$30,000 in Mar 2031', 'Paychecks stop from Jan 2055'
+// 'Take-home −$500 a month from Jun 2040', 'One-time −$30,000 in Mar 2031', 'Paychecks stop from Jan 2055'
 export function describeChange(c) {
   const when = formatShortMonth(c.month);
   if (c.kind === 'stopPaychecks') return `Paychecks stop from ${when}`;
