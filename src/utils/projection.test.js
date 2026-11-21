@@ -297,6 +297,37 @@ describe('retirement', () => {
   });
 });
 
+describe('paying off a debt from an account', () => {
+  const payOff = (extra) => ({ id: 'p', month: '2026-04', kind: 'payOff', accountId: 'wa', debtId: 'card', ...extra });
+  const start = { ...base, accounts: [{ id: 'wa', kind: 'cash', balance: 20000 }, { id: 'card', kind: 'debt', balance: 16000 }] };
+
+  it('moves the money out of the account and the debt in its month, leaving net worth alone', () => {
+    const { points } = projectNetWorth({ ...start, changes: [payOff()] }, { ...still, years: 1 });
+    expect(points[2].byAccount).toEqual({ wa: 20000, card: 16000 });
+    expect(points[3].byAccount).toEqual({ wa: 4000, card: 0 });
+    expect(points[3].netWorth).toBe(points[2].netWorth);
+    expect(points[12].byAccount).toEqual({ wa: 4000, card: 0 });
+  });
+
+  it('pays a set amount, or only what the account holds', () => {
+    expect(projectNetWorth({ ...start, changes: [payOff({ amount: 5000 })] }, { ...still, years: 1 }).points[3].byAccount).toEqual({ wa: 15000, card: 11000 });
+    const short = { ...start, accounts: [{ id: 'wa', kind: 'cash', balance: 6000 }, { id: 'card', kind: 'debt', balance: 16000 }] };
+    expect(projectNetWorth({ ...short, changes: [payOff()] }, { ...still, years: 1 }).points[3].byAccount).toEqual({ wa: 0, card: 10000 });
+  });
+
+  it('pays a mortgage loan down too, recording its payoff', () => {
+    const withLoan = { ...base, accounts: [{ id: 'wa', kind: 'cash', balance: 50000 }], loans: [{ id: 'l', balance: 30000, rate: 0, payment: 1000, extra: 0, escrow: 0 }],
+      changes: [payOff({ debtId: 'l' })] };
+    const { points, payoffs } = projectNetWorth(withLoan, { ...still, years: 1 });
+    expect(payoffs).toEqual({ l: '2026-04' });
+    expect(points[3].byLoan.l).toBe(0);
+    expect(resolveChanges([payOff({ amount: 0 }), { ...payOff(), id: 'q', debtId: undefined }])).toEqual([]);
+    const nameOf = (id) => ({ wa: 'Savings', card: 'Card' })[id];
+    expect(describeChange(payOff(), nameOf)).toBe('Card paid off from Savings in Apr 2026');
+    expect(describeChange(payOff({ amount: 5000 }), nameOf)).toBe('Card paid $5,000 from Savings in Apr 2026');
+  });
+});
+
 describe('by account', () => {
   it("gives each account's and loan's balance every month, which with the savings add up to net worth", () => {
     const start = { ...base, takeHome: 2000, spending: 500, cashCushion: 1000,

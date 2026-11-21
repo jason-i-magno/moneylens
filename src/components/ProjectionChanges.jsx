@@ -16,6 +16,7 @@ const CHANGE_TYPES = [
   { id: 'periodCost', label: 'A cost for several years (e.g. college)', kind: 'periodCost' },
   { id: 'contribution', label: 'Regular deposits into an account', kind: 'contribution' },
   { id: 'spendAccount', label: 'Spend an account down', kind: 'spendAccount' },
+  { id: 'payOff', label: 'Pay off a debt from an account', kind: 'payOff' },
   { id: 'stopPaychecks', label: 'Paychecks stop (retirement)', kind: 'stopPaychecks' },
   { id: 'income', label: 'Other income starts (Social Security, a pension)', kind: 'income', sign: 1 },
 ];
@@ -32,21 +33,22 @@ const HELP = 'Changes you expect, from a month on: take-home pay or spending goi
   + 'take-home by about 85% of it, since a raise is taxed at your top rate), a one-time amount in or out (a car, an inheritance), '
   + 'a cost for several years (college: paid first from an account such as a 529, the rest from what you save, rising by its own rate '
   + 'or with inflation), regular deposits into an account (a 529: they come out of what you save, and a match is added on top), '
-  + 'spending an account down over some years (that money leaves your net worth), other income starting (Social Security or a '
+  + 'spending an account down over some years (that money leaves your net worth), paying a debt off from an account (a card when '
+  + 'its 0% rate ends: the money leaves both, so net worth stays the same), other income starting (Social Security or a '
   + 'pension, after tax, rising with inflation and still paid after your paychecks stop), or paychecks stopping when you retire, which also '
   + 'stops paycheck contributions. Dollar amounts are in today’s dollars: they grow with raises (take-home) or inflation (everything '
   + 'else), like the rest of the projection. Untick a change to see the projection without it.';
 
-const ACCOUNT_KINDS = ['contribution', 'spendAccount'];
+const ACCOUNT_KINDS = ['contribution', 'spendAccount', 'payOff'];
 
 // The projection's future changes: listed with a switch and Delete, plus a form to add one.
-// `changes` are resolveChanges' (sorted, well formed); `accounts` ({ id, name }) are the ones deposits and
-// spending down can use; `markerNumbers` maps a change id to its number on the chart; `onSave({ changes })`
-// replaces the list.
-export default function ProjectionChanges({ changes, accounts = [], endMonth, markerNumbers = {}, open, onToggleHelp, onSave }) {
+// `changes` are resolveChanges' (sorted, well formed); `accounts` ({ id, name }) are the ones deposits, spending
+// down and paying off can use, `debts` ({ id, name }) the debts and loans that can be paid off; `markerNumbers`
+// maps a change id to its number on the chart; `onSave({ changes })` replaces the list.
+export default function ProjectionChanges({ changes, accounts = [], debts = [], endMonth, markerNumbers = {}, open, onToggleHelp, onSave }) {
   const [form, setForm] = useState(() => ({
     type: 'takeHomeDown', amount: '', month: '01', year: String(Number(currentMonth().slice(0, 4)) + 1), label: '',
-    accountId: '', every: '12', times: '', match: '', years: '4', payFrom: '', growth: '',
+    accountId: '', every: '12', times: '', match: '', years: '4', payFrom: '', growth: '', debtId: '',
   }));
   const type = CHANGE_TYPES.find((t) => t.id === form.type);
   const kind = type.kind;
@@ -57,13 +59,15 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
   const years = Number(form.years);
   const growth = form.growth.trim() ? Number(form.growth) : undefined;
   const accountId = form.accountId || accounts[0]?.id || '';
-  const nameOf = (id) => accounts.find((a) => a.id === id)?.name || 'A removed account';
+  const debtId = form.debtId || debts[0]?.id || '';
+  const nameOf = (id) => [...accounts, ...debts].find((a) => a.id === id)?.name || 'A removed account';
 
   const validFor = {
     stopPaychecks: true,
     contribution: !!accountId && amount > 0 && (times === undefined || (Number.isInteger(times) && times > 0)) && (match === undefined || match >= 0),
     spendAccount: !!accountId && years > 0,
     periodCost: amount > 0 && years > 0 && (growth === undefined || Number.isFinite(growth)),
+    payOff: !!accountId && !!debtId && (!form.amount.trim() || amount > 0),
   };
   const valid = Number.isInteger(year) && year >= 1900 && year <= 2200 && (validFor[kind] ?? amount > 0);
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -78,6 +82,9 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
       if (match) change.match = match;
     } else if (kind === 'spendAccount') {
       change.years = years;
+    } else if (kind === 'payOff') {
+      change.debtId = debtId;
+      if (amount > 0) change.amount = amount;
     } else if (kind === 'periodCost') {
       Object.assign(change, { amount, years });
       if (form.payFrom) change.accountId = form.payFrom;
@@ -100,9 +107,10 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
     contribution: 'Each deposit (today’s dollars)',
     periodCost: 'Cost a year (today’s dollars)',
     income: 'Income a month, after tax (today’s dollars)',
+    payOff: 'Amount (blank: pay it all)',
     oneTime: 'Amount (today’s dollars)',
   }[kind] || 'By how much a month (today’s dollars)';
-  const startLabel = { oneTime: 'In', contribution: 'First deposit' }[kind] || 'Starting';
+  const startLabel = { oneTime: 'In', payOff: 'In', contribution: 'First deposit' }[kind] || 'Starting';
 
   return (
     <div className="projection-changes">
@@ -136,9 +144,18 @@ export default function ProjectionChanges({ changes, accounts = [], endMonth, ma
             {CHANGE_TYPES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
           </select>
         </div>
+        {kind === 'payOff' && (
+          <div className="form-group">
+            <label>Debt</label>
+            <select value={debtId} onChange={set('debtId')}>
+              {debts.length === 0 && <option value="">No debts to pay off</option>}
+              {debts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+        )}
         {ACCOUNT_KINDS.includes(kind) && (
           <div className="form-group">
-            <label>Account</label>
+            <label>{kind === 'payOff' ? 'Paid from' : 'Account'}</label>
             <select value={accountId} onChange={set('accountId')}>
               {accounts.length === 0 && <option value="">No accounts to use</option>}
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}

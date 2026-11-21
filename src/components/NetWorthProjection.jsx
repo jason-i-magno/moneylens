@@ -201,7 +201,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
 
   // What can be charted and listed by account: net worth, each account and loan, and what the projection saves;
   // anything that stays at zero the whole time is left out
-  const nameOf = (id) => accounts.find((a) => a.id === id)?.name || 'A removed account';
+  const nameOf = (id) => accounts.find((a) => a.id === id)?.name || loans.find((l) => l.id === id)?.name || 'A removed account';
   const total = { key: 'netWorth', name: 'Net worth', value: (p) => p.netWorth };
   const accountRows = [
     ...start.accounts.map((a) => ({ key: `acct:${a.id}`, name: nameOf(a.id), group: a.kind === 'debt' ? 'owed' : a.kind, value: (p) => p.byAccount[a.id] })),
@@ -221,6 +221,11 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
   const endMonth = expected.points.at(-1).month;
   // Accounts deposits can go into and that can be spent down: the user's own assets
   const changeAccounts = accounts.filter((a) => a.type === 'asset' && !a.auto).map(({ id, name }) => ({ id, name }));
+  // Debts a future change can pay off: the user's own and the mortgage loans
+  const changeDebts = [
+    ...accounts.filter((a) => a.type === 'liability' && !a.auto).map(({ id, name }) => ({ id, name })),
+    ...loans.map(({ id, name }) => ({ id, name })),
+  ];
   const marked = changes.filter((c) => c.enabled !== false && c.month > month && c.month <= endMonth).map((c, i) => ({ ...c, n: i + 1 }));
   const markerNumbers = Object.fromEntries(marked.map((c) => [c.id, c.n]));
   const events = new Map();
@@ -424,7 +429,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
           to use the payments actually made.
         </p>
       )}
-      <ProjectionChanges changes={changes} accounts={changeAccounts} endMonth={endMonth} markerNumbers={markerNumbers} {...helpFor('changes')} onSave={onSave} />
+      <ProjectionChanges changes={changes} accounts={changeAccounts} debts={changeDebts} endMonth={endMonth} markerNumbers={markerNumbers} {...helpFor('changes')} onSave={onSave} />
       {flatCandidates.length > 0 && (
         <div className="projection-flat">
           <span className="muted">Hold as they are:</span>

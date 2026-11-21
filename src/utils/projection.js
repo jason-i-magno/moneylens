@@ -110,9 +110,11 @@ const growth = (pct) => (1 + pct / 100) ** (1 / 12);
 // 'spendAccount' spends its balance down evenly over `years` from `month`: that money leaves net worth.
 // 'periodCost' is a cost of `amount` a year for `years` from `month` (college), paid each month first from
 // the account `accountId` if given (a 529) and the rest from savings; it rises by `growth` % a year if given,
-// else with inflation. Dollar amounts are in today's dollars and grow like what they change: take-home with
-// raises, spending, one-time amounts and deposits with inflation.
-export const CHANGE_KINDS = ['takeHome', 'payRaise', 'spending', 'oneTime', 'stopPaychecks', 'income', 'contribution', 'spendAccount', 'periodCost'];
+// else with inflation. 'payOff' pays the debt `debtId` (a debt account or a mortgage loan) from the account
+// `accountId` in `month`: `amount` (today's dollars, not grown) if given, else all of it, as far as the account
+// covers it; the money leaves both, so net worth doesn't change. Dollar amounts are in today's dollars and grow
+// like what they change: take-home with raises, spending, one-time amounts and deposits with inflation.
+export const CHANGE_KINDS = ['takeHome', 'payRaise', 'spending', 'oneTime', 'stopPaychecks', 'income', 'contribution', 'spendAccount', 'periodCost', 'payOff'];
 export const DEPOSIT_EVERY = [1, 3, 6, 12];
 // A raise is taxed at the top rate, above the average rate on all of pay, so take-home grows by less than
 // the raise: about 85% of it for a typical salaried household (federal 22-24%, FICA, a state tax, a 401(k)
@@ -134,6 +136,7 @@ export function changeEffectText(c, nameOf = () => 'An account') {
     return `${nameOf(c.accountId)} +${dollars(c.amount)} ${EVERY_TEXT[c.every]}${c.match ? `, matched ${c.match}%` : ''}${times}`;
   }
   if (c.kind === 'spendAccount') return `${nameOf(c.accountId)} spent over ${c.years} year${c.years !== 1 ? 's' : ''}`;
+  if (c.kind === 'payOff') return `${nameOf(c.debtId)} paid ${c.amount ? dollars(c.amount) : 'off'} from ${nameOf(c.accountId)}`;
   if (c.kind === 'periodCost') {
     const from = c.accountId ? `, paid first from ${nameOf(c.accountId)}` : '';
     const growth = Number.isFinite(c.growth) ? `, rising ${c.growth}% a year` : '';
@@ -148,7 +151,7 @@ export function changeEffectText(c, nameOf = () => 'An account') {
 
 // 'Take-home −$500 a month from Jun 2040', 'One-time −$30,000 in Mar 2031', 'Paychecks stop from Jan 2055'
 export function describeChange(c, nameOf) {
-  return `${changeEffectText(c, nameOf)} ${c.kind === 'oneTime' ? 'in' : 'from'} ${formatShortMonth(c.month)}`;
+  return `${changeEffectText(c, nameOf)} ${c.kind === 'oneTime' || c.kind === 'payOff' ? 'in' : 'from'} ${formatShortMonth(c.month)}`;
 }
 
 // The saved changes that are well formed; `enabled: false` ones are kept (the list shows them) but marked
@@ -162,6 +165,7 @@ const wellFormed = {
   contribution: (c) => typeof c.accountId === 'string' && c.amount > 0 && DEPOSIT_EVERY.includes(c.every)
     && (c.times === undefined || (Number.isInteger(c.times) && c.times > 0)) && (c.match === undefined || c.match >= 0),
   spendAccount: (c) => typeof c.accountId === 'string' && Number.isFinite(c.years) && c.years > 0,
+  payOff: (c) => typeof c.accountId === 'string' && typeof c.debtId === 'string' && (c.amount === undefined || c.amount > 0),
   periodCost: (c) => c.amount > 0 && Number.isFinite(c.years) && c.years > 0
     && (c.accountId === undefined || typeof c.accountId === 'string') && (c.growth === undefined || Number.isFinite(c.growth)),
 };
@@ -255,6 +259,20 @@ export function projectNetWorth(start, settings) {
       const deposit = c.amount * living;
       account.balance += deposit * (1 + (c.match || 0) / 100);
       surplus -= deposit;
+    }
+    // Paying a debt off from an account, in its month: the money leaves both, so net worth doesn't change
+    for (const c of changes) {
+      if (c.kind !== 'payOff' || c.month !== month) continue;
+      const from = accounts.find((a) => a.id === c.accountId && a.kind !== 'debt' && a.kind !== 'home');
+      const debt = accounts.find((a) => a.id === c.debtId && a.kind === 'debt') || loans.find((l) => l.id === c.debtId);
+      if (!from || !debt) continue;
+      const pay = Math.max(0, Math.min(c.amount ?? debt.balance, debt.balance, from.balance));
+      from.balance -= pay;
+      debt.balance -= pay;
+      if (loans.includes(debt) && debt.balance < 0.005) {
+        debt.balance = 0;
+        payoffs[debt.id] = month;
+      }
     }
     // A cost over several years: a twelfth of the year's cost each month, from the account first
     for (const c of changes) {
