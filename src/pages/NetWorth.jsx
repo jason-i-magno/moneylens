@@ -7,6 +7,7 @@ import Modal from '../components/Modal';
 import FileDropZone from '../components/FileDropZone';
 import EmptyState from '../components/EmptyState';
 import ConfirmButton from '../components/ConfirmButton';
+import NetWorthProjection from '../components/NetWorthProjection';
 import { buildBalanceTimeline, buildNetWorthHistory, loanBalancePoints } from '../utils/netWorth';
 import { parseKeywordList } from '../utils/categorizer';
 import { parseBalanceHistory } from '../utils/csvParser';
@@ -261,6 +262,16 @@ export default function NetWorth({ data, finance }) {
             </LineChart>
           </ResponsiveContainer>
         </div>
+      )}
+
+      {accountsWithBalances.length > 0 && (
+        <NetWorthProjection
+          accounts={accountsWithBalances}
+          mortgages={mortgages}
+          transactions={data.transactions || []}
+          settings={nw.projection}
+          onSave={finance.setProjectionSettings}
+        />
       )}
 
       <div className="card">

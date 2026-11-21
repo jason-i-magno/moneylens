@@ -282,6 +282,16 @@ export function useFinanceData(store) {
     }));
   }, [update]);
 
+  // Net Worth projection settings: changes merge into data.netWorth.projection; undefined removes one
+  // (back to its default or the figure worked out from the data)
+  const setProjectionSettings = useCallback((changes) => {
+    update((d) => {
+      const projection = { ...(d.netWorth.projection || {}), ...changes };
+      for (const key of Object.keys(projection)) if (projection[key] === undefined || projection[key] === null) delete projection[key];
+      return { ...d, netWorth: { ...d.netWorth, projection } };
+    });
+  }, [update]);
+
   const deleteSnapshot = useCallback((id) => {
     update((d) => ({ ...d, netWorth: { ...d.netWorth, snapshots: d.netWorth.snapshots.filter((s) => s.id !== id) } }));
   }, [update]);
@@ -379,6 +389,7 @@ export function useFinanceData(store) {
     addSnapshots,
     importSnapshots,
     deleteSnapshot,
+    setProjectionSettings,
     savePlaidItem,
     applyPlaidSync,
     setPlaidItemError,

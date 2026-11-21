@@ -209,6 +209,20 @@ button, select, input, textarea { font-family: inherit; }
 .balance-import { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
 .balance-import h4 { margin-bottom: 6px; }
 .balance-import .drop-zone { padding: 24px 16px; }
+.projection-heading { margin: 20px 0 10px; }
+.projection-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0 12px; }
+.projection-hint { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--text-muted); }
+.projection-label { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.form-group .projection-label label { margin-bottom: 0; }
+.info-toggle, .info-toggle-inline { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: none; border-radius: 50%; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-family: inherit; font-size: 0.7rem; font-weight: 700; line-height: 1; }
+.info-toggle { cursor: pointer; padding: 0; transition: all 0.2s; }
+.info-toggle:hover, .info-toggle.active { border-color: var(--accent-purple); color: var(--accent-purple); }
+.info-toggle-inline { width: 16px; height: 16px; vertical-align: middle; }
+.projection-explain { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent-purple) 8%, transparent); font-size: 0.75rem; line-height: 1.4; color: var(--text-muted); }
+.projection-effect { display: block; margin-top: 4px; font-weight: 600; color: var(--accent-purple); }
+.projection-flat .projection-explain { flex-basis: 100%; margin-top: 0; }
+.projection-milestones { margin-top: 8px; }
+.projection-flat { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 4px; }
 
 /* === Mortgage === */
 .mortgage-summary { margin-bottom: 16px; }

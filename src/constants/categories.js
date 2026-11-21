@@ -39,3 +39,7 @@ export const categoriesFor = (isCredit) => (isCredit ? [...INCOME_CATEGORIES, CA
 
 export const formatCurrency = (amount) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+
+// "$1.2M", "$450K": for chart axes and projections, where cents are noise
+export const formatCompactCurrency = (amount) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: amount >= 1e6 || amount <= -1e6 ? 2 : 0 }).format(amount);
