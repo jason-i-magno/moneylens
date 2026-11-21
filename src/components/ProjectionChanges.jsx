@@ -8,6 +8,7 @@ import { describeChange } from '../utils/projection';
 const CHANGE_TYPES = [
   { id: 'takeHomeDown', label: 'Take-home pay drops', kind: 'takeHome', sign: -1 },
   { id: 'takeHomeUp', label: 'Take-home pay rises', kind: 'takeHome', sign: 1 },
+  { id: 'payRaise', label: 'Pay rises by a percentage (promotion)', kind: 'payRaise', sign: 1 },
   { id: 'spendingUp', label: 'Spending rises', kind: 'spending', sign: 1 },
   { id: 'spendingDown', label: 'Spending drops', kind: 'spending', sign: -1 },
   { id: 'oneTimeOut', label: 'One-time cost', kind: 'oneTime', sign: -1 },
@@ -17,9 +18,11 @@ const CHANGE_TYPES = [
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const HELP = 'Changes you expect, from a month on: take-home pay or spending going up or down (a dependent no longer qualifying for '
-  + 'tax credits, childcare starting or ending), a one-time amount in or out (a car, an inheritance), or paychecks stopping when you '
-  + 'retire, which also stops paycheck contributions. Amounts are in today’s dollars: they grow with raises (take-home) or '
-  + 'inflation (spending and one-time amounts), like everything else. Untick a change to see the projection without it.';
+  + 'tax credits, childcare starting or ending), pay rising by a percentage (a promotion: paycheck contributions rise by all of it, '
+  + 'take-home by about 85% of it, since a raise is taxed at your top rate), a one-time amount in or out (a car, an inheritance), or '
+  + 'paychecks stopping when you retire, which also stops paycheck contributions. Dollar amounts are in today’s dollars: they grow '
+  + 'with raises (take-home) or inflation (spending and one-time amounts), like everything else. Untick a change to see the '
+  + 'projection without it.';
 
 // The projection's future changes: listed with a switch and Delete, plus a form to add one.
 // `changes` are resolveChanges' (sorted, well formed); `onSave({ changes })` replaces the list.
@@ -78,8 +81,8 @@ export default function ProjectionChanges({ changes, endMonth, open, onToggleHel
         </div>
         {type.kind !== 'stopPaychecks' && (
           <div className="form-group">
-            <label>{type.kind === 'oneTime' ? 'Amount' : 'By how much a month'} (today&apos;s dollars)</label>
-            <input type="number" min="0" step="10" value={form.amount} onChange={set('amount')} placeholder="500" />
+            <label>{type.kind === 'payRaise' ? 'Raise (% of pay)' : <>{type.kind === 'oneTime' ? 'Amount' : 'By how much a month'} (today&apos;s dollars)</>}</label>
+            <input type="number" min="0" step={type.kind === 'payRaise' ? 0.5 : 10} value={form.amount} onChange={set('amount')} placeholder={type.kind === 'payRaise' ? '8' : '500'} />
           </div>
         )}
         <div className="form-group">

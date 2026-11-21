@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  PROJECTION_DEFAULTS, cashFlowBaseline, monthlyPaycheckContribution, projectNetWorth, projectionLoans, projectionMilestones,
+  PROJECTION_DEFAULTS, RAISE_TAKE_HOME_SHARE, cashFlowBaseline, describeChange, monthlyPaycheckContribution, projectNetWorth, projectionLoans, projectionMilestones,
   resolveChanges, resolveProjectionSettings,
 } from './projection';
 
@@ -168,6 +168,19 @@ describe('future changes', () => {
     expect(points[2]).toMatchObject({ cash: 0, invested: 1000 }); // March: 1,000 out of cash
     expect(points[3]).toMatchObject({ cash: 0, invested: 0 });
     expect(points[4]).toMatchObject({ cash: -1000, invested: 0 });
+  });
+
+  it('raises paycheck contributions by all of a pay raise and take-home by its taxed share, compounding', () => {
+    const start = { ...base, takeHome: 4000, accounts: [{ id: 'k', kind: 'invest', balance: 0, monthly: 1000 }],
+      changes: [change('p1', '2026-03', 'payRaise', 10), change('p2', '2026-05', 'payRaise', 10), change('t', '2026-05', 'takeHome', -200)] };
+    const { points } = projectNetWorth(start, { ...still, years: 1 });
+    const share = 0.1 * RAISE_TAKE_HOME_SHARE;
+    const month = (m) => points[m].netWorth - points[m - 1].netWorth;
+    expect(month(1)).toBeCloseTo(5000, 6);
+    expect(month(2)).toBeCloseTo(4000 * (1 + share) + 1100, 6);
+    // the take-home change is dollars, not scaled by the raises
+    expect(month(4)).toBeCloseTo(4000 * (1 + share) ** 2 - 200 + 1210, 6);
+    expect(describeChange(change('p', '2028-04', 'payRaise', 8))).toBe('Pay +8% from Apr 2028');
   });
 
   it('applies a change dated before today from the first month, and leaves out switched-off ones', () => {

@@ -99,10 +99,15 @@ export function projectionLoans(loans, payments, balances) {
 const growth = (pct) => (1 + pct / 100) ** (1 / 12);
 
 // Future changes (netWorth.projection.changes): from `month` on, take-home or spending goes up (+) or down
-// (-) by `amount` a month; or `amount` comes in (+) or goes out (-) once that month; or paychecks stop
-// (take-home and paycheck contributions). Amounts are in today's dollars and grow like what they change:
-// take-home with raises, spending and one-time amounts with inflation.
-export const CHANGE_KINDS = ['takeHome', 'spending', 'oneTime', 'stopPaychecks'];
+// (-) by `amount` a month; or pay rises by `amount` percent (a promotion: paycheck contributions rise by all
+// of it, take-home by RAISE_TAKE_HOME_SHARE of it); or `amount` comes in (+) or goes out (-) once that month;
+// or paychecks stop (take-home and paycheck contributions). Dollar amounts are in today's dollars and grow
+// like what they change: take-home with raises, spending and one-time amounts with inflation.
+export const CHANGE_KINDS = ['takeHome', 'payRaise', 'spending', 'oneTime', 'stopPaychecks'];
+// A raise is taxed at the top rate, above the average rate on all of pay, so take-home grows by less than
+// the raise: about 85% of it for a typical salaried household (federal 22-24%, FICA, a state tax, a 401(k)
+// percentage). Paycheck contributions that are a percentage of pay grow by all of it.
+export const RAISE_TAKE_HOME_SHARE = 0.85;
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 const dollars = (n) => formatCurrency(Math.abs(n)).replace(/\.00$/, '');
@@ -113,6 +118,7 @@ export function describeChange(c) {
   const when = formatShortMonth(c.month);
   if (c.kind === 'stopPaychecks') return `Paychecks stop from ${when}`;
   if (c.kind === 'oneTime') return `One-time ${signed(c.amount)} in ${when}`;
+  if (c.kind === 'payRaise') return `Pay ${c.amount < 0 ? '\u2212' : '+'}${Math.abs(c.amount)}% from ${when}`;
   return `${c.kind === 'takeHome' ? 'Take-home' : 'Spending'} ${signed(c.amount)} a month from ${when}`;
 }
 
@@ -121,6 +127,7 @@ export function changeTitle(c) {
   if (c.label) return c.label;
   if (c.kind === 'stopPaychecks') return 'Paychecks stop';
   if (c.kind === 'oneTime') return c.amount < 0 ? 'One-time cost' : 'Money in';
+  if (c.kind === 'payRaise') return c.amount < 0 ? 'Pay cut' : 'Pay rises';
   return `${c.kind === 'takeHome' ? 'Take-home' : 'Spending'} ${c.amount < 0 ? 'drops' : 'rises'}`;
 }
 
@@ -181,14 +188,17 @@ export function projectNetWorth(start, settings) {
     const active = changes.filter((c) => c.month <= month);
     const paid = !active.some((c) => c.kind === 'stopPaychecks');
     const monthlyChange = (kind) => active.reduce((s, c) => s + (c.kind === kind ? c.amount : 0), 0);
+    const raises = active.filter((c) => c.kind === 'payRaise');
+    const grossRaise = raises.reduce((f, c) => f * (1 + c.amount / 100), 1);
+    const takeHomeRaise = raises.reduce((f, c) => f * (1 + (c.amount / 100) * RAISE_TAKE_HOME_SHARE), 1);
     for (const a of accounts) {
       if (!g[a.kind]) continue;
-      a.balance = a.balance * g[a.kind] + (a.kind === 'home' || !paid ? 0 : (a.monthly || 0) * pay);
+      a.balance = a.balance * g[a.kind] + (a.kind === 'home' || !paid ? 0 : (a.monthly || 0) * pay * grossRaise);
     }
     saved *= g.cash;
     invested *= g.invest;
 
-    const takeHome = paid ? Math.max(0, start.takeHome + monthlyChange('takeHome')) * pay : 0;
+    const takeHome = paid ? Math.max(0, start.takeHome * takeHomeRaise + monthlyChange('takeHome')) * pay : 0;
     const spending = Math.max(0, start.spending + monthlyChange('spending')) * living;
     const once = changes.reduce((s, c) => s + (c.kind === 'oneTime' && c.month === month ? c.amount : 0), 0) * living;
     let surplus = takeHome - spending + once;
