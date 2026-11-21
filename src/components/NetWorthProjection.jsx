@@ -7,7 +7,7 @@ import { formatCompactCurrency, formatCurrency } from '../constants/categories';
 import { chartTooltipProps } from '../constants/chartTooltip';
 import { currentMonth, formatMonth, formatShortMonth as shortMonth } from '../utils/dates';
 import {
-  RANGE_POINTS, cashFlowBaseline, changeTitle, resolveChanges, monthlyPaycheckContribution, projectNetWorth, projectionLoans,
+  RANGE_POINTS, cashFlowBaseline, changeEffectText, changeTitle, resolveChanges, monthlyPaycheckContribution, projectNetWorth, projectionLoans,
   projectionMilestones, resolveProjectionSettings,
 } from '../utils/projection';
 
@@ -56,6 +56,20 @@ const signed = (amount) => {
   if (Math.abs(amount) < 500) return 'about the same';
   return `${amount > 0 ? '+' : '−'}${formatCompactCurrency(Math.abs(amount))}`;
 };
+
+// The chart's tooltip: the month, the expected value and range, and what happens that month
+function ProjectionTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const point = payload[0].payload;
+  return (
+    <div className="projection-tooltip">
+      <div className="projection-tooltip-month">{point.label}</div>
+      <div>Expected: {formatCurrency(Math.round(point.expected))}</div>
+      <div className="muted">Range: {formatCompactCurrency(point.range[0])} – {formatCompactCurrency(point.range[1])}</div>
+      {point.events.map((e) => <div key={e} className="projection-tooltip-event">{e}</div>)}
+    </div>
+  );
+}
 
 // hint: the figure from your data, always shown. help (what the field does) and effect (what a nudge to it
 // changes) show only while the field's "i" is open; effect is worked out only then.
@@ -178,11 +192,24 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
     return `${perMonth} \u2192 ${payoff}${byEnd(nudged, rates)}`;
   };
 
-  const chartData = [];
-  for (let m = 0; m <= rates.years * 12; m += 12) {
+  // Changes inside the projection, numbered for their chart markers; with each loan payoff, what a month's
+  // tooltip lists
+  const endMonth = expected.points.at(-1).month;
+  const marked = changes.filter((c) => c.enabled !== false && c.month > month && c.month <= endMonth).map((c, i) => ({ ...c, n: i + 1 }));
+  const markerNumbers = Object.fromEntries(marked.map((c) => [c.id, c.n]));
+  const events = new Map();
+  const addEvent = (at, text) => events.set(at, [...(events.get(at) || []), text]);
+  for (const c of marked) addEvent(c.month, `${c.n}. ${c.label || changeTitle(c)}: ${changeEffectText(c)}`);
+  for (const l of loans) if (expected.payoffs[l.id]) addEvent(expected.payoffs[l.id], loans.length > 1 ? `${l.name} paid off` : 'Mortgage paid off');
+
+  // A point every year, plus one at each event's month so hovering a marker shows that month
+  const chartMonths = new Set();
+  for (let m = 0; m <= rates.years * 12; m += 12) chartMonths.add(m);
+  for (const at of events.keys()) chartMonths.add(monthsFrom(month, at));
+  const chartData = [...chartMonths].sort((a, b) => a - b).map((m) => {
     const p = expected.points[m];
-    chartData.push({ x: yearPosition(p.month), label: formatMonth(p.month), expected: valueAt(expected, m), range: [valueAt(low, m), valueAt(high, m)] });
-  }
+    return { x: yearPosition(p.month), label: formatMonth(p.month), expected: valueAt(expected, m), range: [valueAt(low, m), valueAt(high, m)], events: events.get(p.month) || [] };
+  });
   const horizons = [...new Set([5, 10, rates.years].filter((y) => y <= rates.years))];
   const milestones = projectionMilestones(expected.points.map((pt, m) => ({ ...pt, netWorth: deflate(pt.netWorth, m) }))).slice(0, 4);
   const firstPayoff = loans.map((l) => expected.payoffs[l.id]).filter(Boolean).sort()[0];
@@ -253,29 +280,16 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
         )}
       </div>
 
-      <ResponsiveContainer width="100%" height={320}>
+      <ResponsiveContainer width="100%" height={320} className="projection-chart">
         <ComposedChart data={chartData} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#333338" />
           <XAxis dataKey="x" type="number" domain={['dataMin', 'dataMax']} allowDecimals={false} tickFormatter={(x) => String(Math.floor(x))} stroke="#6b7280" tick={{ fontSize: 12 }} />
           <YAxis tickFormatter={formatCompactCurrency} stroke="#6b7280" width={Y_AXIS_WIDTH} />
-          <Tooltip
-            labelFormatter={(_, payload) => payload?.[0]?.payload.label}
-            formatter={(value, name) => (name === 'range'
-              ? [`${formatCompactCurrency(value[0])} – ${formatCompactCurrency(value[1])}`, 'Range']
-              : [formatCurrency(Math.round(value)), 'Expected'])}
-            itemSorter={(item) => (item.name === 'expected' ? 0 : 1)}
-            {...chartTooltipProps(CHART_MARGIN.left + Y_AXIS_WIDTH)}
-          />
+          <Tooltip content={<ProjectionTooltip />} {...chartTooltipProps(CHART_MARGIN.left + Y_AXIS_WIDTH)} />
           <Area type="monotone" dataKey="range" name="range" stroke="none" fill="#C97CE8" fillOpacity={0.18} isAnimationActive={false} />
           <Line type="monotone" dataKey="expected" name="expected" stroke="#E8E4DD" strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} isAnimationActive={false} />
-          {changes.filter((c) => c.enabled !== false && c.month > month && c.month <= expected.points.at(-1).month).map((c) => (
-            <ReferenceLine
-              key={c.id}
-              x={yearPosition(c.month)}
-              stroke="#9CA3AF"
-              strokeDasharray="2 4"
-              label={{ value: changeTitle(c), fill: '#9CA3AF', fontSize: 10, position: 'insideBottomLeft' }}
-            />
+          {marked.map((c) => (
+            <ReferenceLine key={c.id} x={yearPosition(c.month)} stroke="#9CA3AF" strokeDasharray="2 4" label={{ value: String(c.n), fill: '#9CA3AF', fontSize: 11, position: 'top' }} />
           ))}
           {loans.filter((l) => expected.payoffs[l.id]).map((l) => (
             <ReferenceLine
@@ -283,7 +297,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
               x={yearPosition(expected.payoffs[l.id])}
               stroke="#7CB5E8"
               strokeDasharray="4 4"
-              label={{ value: loans.length > 1 ? `${l.name} paid off` : 'Mortgage paid off', fill: '#7CB5E8', fontSize: 11, position: 'insideTopLeft' }}
+              label={{ value: '\u{1F3E0}', fontSize: 12, position: 'top' }}
             />
           ))}
         </ComposedChart>
@@ -353,7 +367,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
           to use the payments actually made.
         </p>
       )}
-      <ProjectionChanges changes={changes} endMonth={expected.points.at(-1).month} {...helpFor('changes')} onSave={onSave} />
+      <ProjectionChanges changes={changes} endMonth={endMonth} markerNumbers={markerNumbers} {...helpFor('changes')} onSave={onSave} />
       {flatCandidates.length > 0 && (
         <div className="projection-flat">
           <span className="muted">Hold as they are:</span>

@@ -113,13 +113,17 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const dollars = (n) => formatCurrency(Math.abs(n)).replace(/\.00$/, '');
 const signed = (n) => `${n < 0 ? '\u2212' : '+'}${dollars(n)}`;
 
+// What a change does, without when: 'Take-home −$500 a month', 'Pay +8%', 'One-time −$30,000', 'Paychecks stop'
+export function changeEffectText(c) {
+  if (c.kind === 'stopPaychecks') return 'Paychecks stop';
+  if (c.kind === 'oneTime') return `One-time ${signed(c.amount)}`;
+  if (c.kind === 'payRaise') return `Pay ${c.amount < 0 ? '\u2212' : '+'}${Math.abs(c.amount)}%`;
+  return `${c.kind === 'takeHome' ? 'Take-home' : 'Spending'} ${signed(c.amount)} a month`;
+}
+
 // 'Take-home −$500 a month from Jun 2040', 'One-time −$30,000 in Mar 2031', 'Paychecks stop from Jan 2055'
 export function describeChange(c) {
-  const when = formatShortMonth(c.month);
-  if (c.kind === 'stopPaychecks') return `Paychecks stop from ${when}`;
-  if (c.kind === 'oneTime') return `One-time ${signed(c.amount)} in ${when}`;
-  if (c.kind === 'payRaise') return `Pay ${c.amount < 0 ? '\u2212' : '+'}${Math.abs(c.amount)}% from ${when}`;
-  return `${c.kind === 'takeHome' ? 'Take-home' : 'Spending'} ${signed(c.amount)} a month from ${when}`;
+  return `${changeEffectText(c)} ${c.kind === 'oneTime' ? 'in' : 'from'} ${formatShortMonth(c.month)}`;
 }
 
 // A few words for the chart: the change's own description, else what kind of change it is

@@ -231,6 +231,11 @@ h4.projection-subheading { margin: 0; }
 .projection-when select { flex: 1; min-width: 0; }
 .projection-when input { width: 90px; flex: none; }
 .projection-change-add button { width: 100%; }
+.projection-chart .recharts-reference-line { pointer-events: none; }
+.projection-tooltip { background: var(--card); border: 1px solid #333; border-radius: 8px; padding: 10px 12px; font-size: 0.85rem; line-height: 1.5; white-space: normal; }
+.projection-tooltip-month { font-weight: 600; margin-bottom: 2px; }
+.projection-tooltip-event { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); color: var(--text-muted); }
+.projection-marker { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; margin-right: 6px; border-radius: 9px; border: 1px dashed var(--text-muted); color: var(--text-muted); font-size: 0.7rem; font-weight: 700; vertical-align: middle; }
 .projection-milestones { margin-top: 8px; }
 .projection-flat { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 4px; }
 

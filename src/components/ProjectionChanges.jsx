@@ -25,8 +25,9 @@ const HELP = 'Changes you expect, from a month on: take-home pay or spending goi
   + 'projection without it.';
 
 // The projection's future changes: listed with a switch and Delete, plus a form to add one.
-// `changes` are resolveChanges' (sorted, well formed); `onSave({ changes })` replaces the list.
-export default function ProjectionChanges({ changes, endMonth, open, onToggleHelp, onSave }) {
+// `changes` are resolveChanges' (sorted, well formed); `markerNumbers` maps a change id to its number on the
+// chart; `onSave({ changes })` replaces the list.
+export default function ProjectionChanges({ changes, endMonth, markerNumbers = {}, open, onToggleHelp, onSave }) {
   const [form, setForm] = useState(() => ({ type: 'takeHomeDown', amount: '', month: '01', year: String(Number(currentMonth().slice(0, 4)) + 1), label: '' }));
   const type = CHANGE_TYPES.find((t) => t.id === form.type);
   const amount = parseFloat(form.amount);
@@ -62,6 +63,7 @@ export default function ProjectionChanges({ changes, endMonth, open, onToggleHel
               <label className="toggle-label">
                 <input type="checkbox" checked={c.enabled !== false} onChange={() => toggle(c.id)} />
                 <span>
+                  {markerNumbers[c.id] && <span className="projection-marker" title="Its number on the chart">{markerNumbers[c.id]}</span>}
                   {c.label && <strong>{c.label}: </strong>}
                   {describeChange(c)}
                   {c.month > endMonth && <span className="muted"> (after the projection ends)</span>}
