@@ -1,11 +1,13 @@
 import { useMemo, useState } from 'react';
 import { ComposedChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import SummaryCard from './SummaryCard';
+import HelpToggle from './HelpToggle';
+import ProjectionChanges from './ProjectionChanges';
 import { formatCompactCurrency, formatCurrency } from '../constants/categories';
 import { chartTooltipProps } from '../constants/chartTooltip';
-import { currentMonth, formatMonth } from '../utils/dates';
+import { currentMonth, formatMonth, formatShortMonth as shortMonth } from '../utils/dates';
 import {
-  RANGE_POINTS, cashFlowBaseline, monthlyPaycheckContribution, projectNetWorth, projectionLoans,
+  RANGE_POINTS, cashFlowBaseline, changeTitle, resolveChanges, monthlyPaycheckContribution, projectNetWorth, projectionLoans,
   projectionMilestones, resolveProjectionSettings,
 } from '../utils/projection';
 
@@ -44,11 +46,6 @@ const parseNumber = (text) => {
   return Number.isFinite(n) ? n : undefined;
 };
 
-// 'YYYY-MM' → 'Oct 2031'
-const shortMonth = (month) => {
-  const [y, m] = month.split('-').map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-};
 // 'YYYY-MM' → a position on the chart's year axis
 const yearPosition = (month) => Number(month.slice(0, 4)) + (Number(month.slice(5, 7)) - 1) / 12;
 // Whole months from one 'YYYY-MM' to another
@@ -59,15 +56,6 @@ const signed = (amount) => {
   if (Math.abs(amount) < 500) return 'about the same';
   return `${amount > 0 ? '+' : '−'}${formatCompactCurrency(Math.abs(amount))}`;
 };
-
-// The small "i" that shows or hides an explanation
-function HelpToggle({ about, open, onClick }) {
-  return (
-    <button type="button" className={`info-toggle ${open ? 'active' : ''}`} aria-expanded={open} aria-label={`What ${about} does`} title={open ? 'Hide' : 'What this does'} onClick={onClick}>
-      i
-    </button>
-  );
-}
 
 // hint: the figure from your data, always shown. help (what the field does) and effect (what a nudge to it
 // changes) show only while the field's "i" is open; effect is worked out only then.
@@ -148,6 +136,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
   const cashCushion = numberFor('cashCushion', derived.cashCushion);
   const holdFlat = useMemo(() => new Set(settings.holdFlat || []), [settings.holdFlat]);
   const loans = derived.loans.map((l) => ({ ...l, extra: extraFor(l) }));
+  const changes = useMemo(() => resolveChanges(settings.changes), [settings.changes]);
 
   const start = {
     month,
@@ -159,6 +148,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
     takeHome,
     spending,
     cashCushion,
+    changes,
   };
   const expected = projectNetWorth(start, rates);
   const low = projectNetWorth(start, { ...rates, investReturn: rates.investReturn - RANGE_POINTS, homeGrowth: rates.homeGrowth - RANGE_POINTS / 2 });
@@ -278,6 +268,15 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
           />
           <Area type="monotone" dataKey="range" name="range" stroke="none" fill="#C97CE8" fillOpacity={0.18} isAnimationActive={false} />
           <Line type="monotone" dataKey="expected" name="expected" stroke="#E8E4DD" strokeWidth={2.5} dot={false} activeDot={{ r: 5 }} isAnimationActive={false} />
+          {changes.filter((c) => c.enabled !== false && c.month > month && c.month <= expected.points.at(-1).month).map((c) => (
+            <ReferenceLine
+              key={c.id}
+              x={yearPosition(c.month)}
+              stroke="#9CA3AF"
+              strokeDasharray="2 4"
+              label={{ value: changeTitle(c), fill: '#9CA3AF', fontSize: 10, position: 'insideBottomLeft' }}
+            />
+          ))}
           {loans.filter((l) => expected.payoffs[l.id]).map((l) => (
             <ReferenceLine
               key={l.id}
@@ -354,6 +353,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
           to use the payments actually made.
         </p>
       )}
+      <ProjectionChanges changes={changes} endMonth={expected.points.at(-1).month} {...helpFor('changes')} onSave={onSave} />
       {flatCandidates.length > 0 && (
         <div className="projection-flat">
           <span className="muted">Hold as they are:</span>

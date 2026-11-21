@@ -2,7 +2,8 @@
 // saved, paycheck contributions, the mortgage paydown and growth. Pure: the page passes today's balances.
 import { isIncome, isSpending } from './transactions';
 import { keywordRegex } from './categorizer';
-import { addMonths } from './dates';
+import { addMonths, formatShortMonth } from './dates';
+import { formatCurrency } from '../constants/categories';
 import { paycheckContributions } from './netWorth';
 import { averageExtraPrincipal } from './mortgageCalculations';
 
@@ -97,17 +98,53 @@ export function projectionLoans(loans, payments, balances) {
 
 const growth = (pct) => (1 + pct / 100) ** (1 / 12);
 
+// Future changes (netWorth.projection.changes): from `month` on, take-home or spending goes up (+) or down
+// (-) by `amount` a month; or `amount` comes in (+) or goes out (-) once that month; or paychecks stop
+// (take-home and paycheck contributions). Amounts are in today's dollars and grow like what they change:
+// take-home with raises, spending and one-time amounts with inflation.
+export const CHANGE_KINDS = ['takeHome', 'spending', 'oneTime', 'stopPaychecks'];
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+const dollars = (n) => formatCurrency(Math.abs(n)).replace(/\.00$/, '');
+const signed = (n) => `${n < 0 ? '\u2212' : '+'}${dollars(n)}`;
+
+// 'Take-home −$525 a month from Jun 2040', 'One-time −$30,000 in Mar 2031', 'Paychecks stop from Jan 2055'
+export function describeChange(c) {
+  const when = formatShortMonth(c.month);
+  if (c.kind === 'stopPaychecks') return `Paychecks stop from ${when}`;
+  if (c.kind === 'oneTime') return `One-time ${signed(c.amount)} in ${when}`;
+  return `${c.kind === 'takeHome' ? 'Take-home' : 'Spending'} ${signed(c.amount)} a month from ${when}`;
+}
+
+// A few words for the chart: the change's own description, else what kind of change it is
+export function changeTitle(c) {
+  if (c.label) return c.label;
+  if (c.kind === 'stopPaychecks') return 'Paychecks stop';
+  if (c.kind === 'oneTime') return c.amount < 0 ? 'One-time cost' : 'Money in';
+  return `${c.kind === 'takeHome' ? 'Take-home' : 'Spending'} ${c.amount < 0 ? 'drops' : 'rises'}`;
+}
+
+// The saved changes that are well formed; `enabled: false` ones are kept (the list shows them) but marked
+export function resolveChanges(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((c) => c && typeof c.id === 'string' && MONTH_RE.test(c.month) && CHANGE_KINDS.includes(c.kind)
+      && (c.kind === 'stopPaychecks' || Number.isFinite(c.amount)))
+    .sort((a, b) => a.month.localeCompare(b.month));
+}
+
 // start: {
 //   month: 'YYYY-MM' (today),
 //   accounts: [{ id, kind, balance, monthly }]: kind 'invest' | 'cash' | 'home' (grow at their rate; invest
 //     and cash also get `monthly` contributions, rising with raises), 'flat' (an asset held as it is) or
 //     'debt' (owed, held as it is);
 //   loans: [{ id, balance, rate, payment, escrow, extra }],
-//   takeHome, spending (a month, today), cashCushion (today's dollars)
+//   takeHome, spending (a month, today), cashCushion (today's dollars),
+//   changes: future changes (see resolveChanges); ones with `enabled: false` are left out
 // }
 // Each month, take-home pay minus spending, escrow and loan payments is saved: into cash until cash
-// accounts and savings reach the cushion (rising with inflation), then invested. A loan's payment goes to
-// savings once it's paid off. Returns { points: one per month from 0 (today) with netWorth, invested, cash,
+// accounts and savings reach the cushion (rising with inflation), then invested; a shortfall is taken from
+// those savings, cash first. A loan's payment goes to savings once it's paid off. Returns { points: one per month from 0 (today) with netWorth, invested, cash,
 // home, other, owed; payoffs: loan id → 'YYYY-MM' }.
 export function projectNetWorth(start, settings) {
   const { years, investReturn, cashReturn, homeGrowth, raise, inflation } = settings;
@@ -116,6 +153,7 @@ export function projectNetWorth(start, settings) {
   const gLiving = growth(inflation);
   const accounts = start.accounts.map((a) => ({ ...a }));
   const loans = start.loans.map((l) => ({ ...l }));
+  const changes = (start.changes || []).filter((c) => c.enabled !== false);
   const payoffs = {};
   let saved = 0; // savings kept as cash
   let invested = 0; // savings invested
@@ -139,24 +177,31 @@ export function projectNetWorth(start, settings) {
   for (let m = 1; m <= years * 12; m++) {
     pay *= gPay;
     living *= gLiving;
+    const month = addMonths(start.month, m);
+    const active = changes.filter((c) => c.month <= month);
+    const paid = !active.some((c) => c.kind === 'stopPaychecks');
+    const monthlyChange = (kind) => active.reduce((s, c) => s + (c.kind === kind ? c.amount : 0), 0);
     for (const a of accounts) {
       if (!g[a.kind]) continue;
-      a.balance = a.balance * g[a.kind] + (a.kind === 'home' ? 0 : (a.monthly || 0) * pay);
+      a.balance = a.balance * g[a.kind] + (a.kind === 'home' || !paid ? 0 : (a.monthly || 0) * pay);
     }
     saved *= g.cash;
     invested *= g.invest;
 
-    let surplus = start.takeHome * pay - start.spending * living;
+    const takeHome = paid ? Math.max(0, start.takeHome + monthlyChange('takeHome')) * pay : 0;
+    const spending = Math.max(0, start.spending + monthlyChange('spending')) * living;
+    const once = changes.reduce((s, c) => s + (c.kind === 'oneTime' && c.month === month ? c.amount : 0), 0) * living;
+    let surplus = takeHome - spending + once;
     for (const loan of loans) {
       surplus -= (loan.escrow || 0) * living; // taxes and insurance, still owed once the loan is paid off
       if (loan.balance <= 0) continue;
       const interest = (loan.balance * loan.rate) / 1200;
-      const paid = Math.min(loan.balance + interest, loan.payment + (loan.extra || 0));
-      loan.balance += interest - paid;
-      surplus -= paid;
+      const payment = Math.min(loan.balance + interest, loan.payment + (loan.extra || 0));
+      loan.balance += interest - payment;
+      surplus -= payment;
       if (loan.balance < 0.005) {
         loan.balance = 0;
-        payoffs[loan.id] = addMonths(start.month, m);
+        payoffs[loan.id] = month;
       }
     }
     if (surplus > 0) {
@@ -165,7 +210,15 @@ export function projectNetWorth(start, settings) {
       saved += toCash;
       invested += surplus - toCash;
     } else {
-      saved += surplus;
+      // A shortfall (after paychecks stop, say) comes out of savings kept as cash, then invested savings;
+      // beyond that cash goes below zero
+      let need = -surplus;
+      const fromCash = Math.min(need, Math.max(saved, 0));
+      saved -= fromCash;
+      need -= fromCash;
+      const fromInvested = Math.min(need, invested);
+      invested -= fromInvested;
+      saved -= need - fromInvested;
     }
     points.push(point(m));
   }

@@ -221,6 +221,16 @@ button, select, input, textarea { font-family: inherit; }
 .projection-explain { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--accent-purple) 8%, transparent); font-size: 0.75rem; line-height: 1.4; color: var(--text-muted); }
 .projection-effect { display: block; margin-top: 4px; font-weight: 600; color: var(--accent-purple); }
 .projection-flat .projection-explain { flex-basis: 100%; margin-top: 0; }
+.projection-changes { margin: 8px 0 16px; }
+h4.projection-subheading { margin: 0; }
+.projection-change-list { list-style: none; margin: 8px 0 12px; padding: 0; }
+.projection-change { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.projection-change .toggle-label { color: var(--text); }
+.projection-change-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 12px; align-items: end; margin-top: 8px; }
+.projection-when { display: flex; gap: 8px; }
+.projection-when select { flex: 1; min-width: 0; }
+.projection-when input { width: 90px; flex: none; }
+.projection-change-add button { width: 100%; }
 .projection-milestones { margin-top: 8px; }
 .projection-flat { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 4px; }
 

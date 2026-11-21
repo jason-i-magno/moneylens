@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   PROJECTION_DEFAULTS, cashFlowBaseline, monthlyPaycheckContribution, projectNetWorth, projectionLoans, projectionMilestones,
-  resolveProjectionSettings,
+  resolveChanges, resolveProjectionSettings,
 } from './projection';
 
 const still = { years: 2, investReturn: 0, cashReturn: 0, homeGrowth: 0, raise: 0, inflation: 0 };
@@ -110,6 +110,69 @@ describe('projecting', () => {
     const start = { ...base, accounts: [{ id: 'a', kind: 'cash', balance: 1000 }], loans: [{ id: 'l', balance: 0, rate: 5, payment: 900, extra: 0, escrow: 100 }], takeHome: 0, spending: 50 };
     const { points } = projectNetWorth(start, { ...still, years: 1 });
     expect(points[12].cash).toBe(1000 - 12 * 150);
+  });
+});
+
+describe('future changes', () => {
+  const change = (id, month, kind, amount, extra = {}) => ({ id, month, kind, amount, ...extra });
+  const saving = { ...base, takeHome: 3000, spending: 1000 };
+  const savedBy = (points, m) => points[m].netWorth - points[0].netWorth;
+
+  it('keeps only well-formed changes, in month order', () => {
+    const list = [
+      change('b', '2027-03', 'spending', 200),
+      change('a', '2026-06', 'takeHome', -500, { enabled: false }),
+      change('c', '2026-13', 'oneTime', 1),
+      change('d', '2027-01', 'stopPaychecks'),
+      change('e', '2027-01', 'oneTime', 'lots'),
+      { month: '2027-01', kind: 'oneTime', amount: 5 },
+      change('f', '2027-01', 'lottery', 5),
+    ];
+    expect(resolveChanges(list).map((c) => c.id)).toEqual(['a', 'd', 'b']);
+    expect(resolveChanges(undefined)).toEqual([]);
+  });
+
+  it('changes take-home or spending from its month on', () => {
+    const { points } = projectNetWorth({ ...saving, changes: [change('t', '2026-04', 'takeHome', -500), change('s', '2026-07', 'spending', 300)] }, { ...still, years: 1 });
+    expect(savedBy(points, 2)).toBe(4000);
+    expect(savedBy(points, 3)).toBe(5500); // April: 1,500
+    expect(savedBy(points, 6)).toBe(9700); // 2 x 2,000 + 3 x 1,500, then July on: 1,200 a month
+    expect(savedBy(points, 7)).toBe(10900);
+  });
+
+  it('grows a take-home change with raises and a spending change with inflation, like what they change', () => {
+    const { points } = projectNetWorth({ ...base, takeHome: 1000, changes: [change('t', '2026-01', 'takeHome', 1000)] }, { ...still, years: 1, raise: 12 });
+    const plain = projectNetWorth({ ...base, takeHome: 2000 }, { ...still, years: 1, raise: 12 }).points;
+    expect(points[12].netWorth).toBeCloseTo(plain[12].netWorth, 6);
+  });
+
+  it('adds or takes a one-time amount in its month only, grown by inflation', () => {
+    const { points } = projectNetWorth({ ...base, changes: [change('car', '2027-01', 'oneTime', -24000), change('gift', '2026-03', 'oneTime', 1000)] }, { ...still, years: 2, inflation: 10 });
+    expect(savedBy(points, 1)).toBe(0);
+    expect(savedBy(points, 2)).toBeCloseTo(1000 * 1.1 ** (2 / 12), 6);
+    expect(savedBy(points, 13) - savedBy(points, 11)).toBeCloseTo(-24000 * 1.1, 6);
+  });
+
+  it('stops take-home and paycheck contributions when paychecks stop, and pays spending from savings', () => {
+    const start = { ...saving, accounts: [{ id: 'k', kind: 'invest', balance: 0, monthly: 500 }], changes: [change('r', '2026-07', 'stopPaychecks')] };
+    const { points } = projectNetWorth(start, { ...still, years: 1 });
+    expect(points[5]).toMatchObject({ invested: 2500 + 5 * 2000, cash: 0 });
+    // July on: no paychecks or contributions; 1,000 a month of spending comes out of the invested savings
+    expect(points[12]).toMatchObject({ invested: 2500 + 10000 - 7000, cash: 0 });
+  });
+
+  it('takes a shortfall from cash savings first, then invested savings, then lets cash go below zero', () => {
+    const start = { ...base, takeHome: 3000, spending: 1000, cashCushion: 1000, changes: [change('r', '2026-03', 'stopPaychecks')] };
+    const { points } = projectNetWorth(start, { ...still, years: 1 });
+    expect(points[1]).toMatchObject({ cash: 1000, invested: 1000 });
+    expect(points[2]).toMatchObject({ cash: 0, invested: 1000 }); // March: 1,000 out of cash
+    expect(points[3]).toMatchObject({ cash: 0, invested: 0 });
+    expect(points[4]).toMatchObject({ cash: -1000, invested: 0 });
+  });
+
+  it('applies a change dated before today from the first month, and leaves out switched-off ones', () => {
+    const { points } = projectNetWorth({ ...saving, changes: [change('old', '2020-01', 'spending', 500), change('off', '2026-01', 'takeHome', 9000, { enabled: false })] }, { ...still, years: 1 });
+    expect(savedBy(points, 1)).toBe(1500);
   });
 });
 
