@@ -13,6 +13,7 @@ const Trends = lazy(() => import('./pages/Trends'));
 const Budgets = lazy(() => import('./pages/Budgets'));
 const Mortgage = lazy(() => import('./pages/Mortgage'));
 const NetWorth = lazy(() => import('./pages/NetWorth'));
+const PropertyTax = lazy(() => import('./pages/PropertyTax'));
 const HsaReceipts = lazy(() => import('./pages/HsaReceipts'));
 const Import = lazy(() => import('./pages/Import'));
 const BankSync = lazy(() => import('./pages/BankSync'));
@@ -83,6 +84,7 @@ export default function App({ store }) {
           }
         />
         <Route path="/mortgage" element={<Mortgage data={data} finance={finance} />} />
+        <Route path="/property-tax" element={<PropertyTax data={data} updatePropertyTax={finance.updatePropertyTax} />} />
         <Route path="/net-worth" element={<NetWorth data={data} finance={finance} />} />
         <Route path="/import" element={<Import data={data} finance={finance} />} />
         <Route

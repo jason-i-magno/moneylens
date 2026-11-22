@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { formatCurrency } from '../constants/categories';
 import { chartTooltipProps } from '../constants/chartTooltip';
@@ -917,7 +918,10 @@ export default function Mortgage({ data, finance }) {
             <div key={p.id} className="card">
               <div className="amort-header">
                 <h3>Property</h3>
-                <button className="btn-icon" onClick={() => setModal({ type: 'property', editing: p })}>Edit</button>
+                <div className="data-actions">
+                  <Link className="btn-icon" to={`/property-tax?property=${p.id}`}>Property Tax</Link>
+                  <button className="btn-icon" onClick={() => setModal({ type: 'property', editing: p })}>Edit</button>
+                </div>
               </div>
               <div className="mortgage-grid">
                 <div><span className="label">Address</span><span className="value">{p.address}</span></div>

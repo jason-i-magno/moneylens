@@ -4,6 +4,7 @@ import { plaidApiPlugin } from './server/plaidApi.js'
 import { dataApiPlugin } from './server/dataApi.js'
 import { receiptsApiPlugin } from './server/receiptsApi.js'
 import { reviewApiPlugin } from './server/reviewApi.js'
+import { appealApiPlugin } from './server/appealApi.js'
 import { parseHostList } from './server/http.js'
 
 export default defineConfig(({ mode }) => {
@@ -14,7 +15,7 @@ export default defineConfig(({ mode }) => {
   const allowedHosts = extraHosts.length ? extraHosts : undefined
 
   return {
-    plugins: [react(), ...(mode === 'test' ? [] : [plaidApiPlugin(env), dataApiPlugin(env), receiptsApiPlugin(env), reviewApiPlugin(env)])],
+    plugins: [react(), ...(mode === 'test' ? [] : [plaidApiPlugin(env), dataApiPlugin(env), receiptsApiPlugin(env), reviewApiPlugin(env), appealApiPlugin(env)])],
     server: { allowedHosts },
     preview: { allowedHosts },
     test: {

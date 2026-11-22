@@ -21,19 +21,19 @@ function Category({ c }) {
   const over = c.budget ? c.spent - c.budget : null;
   const usual = c.average === null ? 'no usual yet' : `usual ${formatCurrency(c.average)}`;
   return (
-    <div className="review-row">
-      <div className="review-main">
-        <div className="review-title"><span className="review-icon">{cat?.icon}</span>{cat?.name || c.id}</div>
-        <div className="review-meta">
+    <div className="item-row">
+      <div className="item-main">
+        <div className="item-title"><span className="item-icon">{cat?.icon}</span>{cat?.name || c.id}</div>
+        <div className="item-meta">
           {usual}
           {over !== null && (over > 0
             ? <> · <span className="over">{formatCurrency(over)} over budget</span></>
             : ` · ${formatCurrency(-over)} of ${formatCurrency(c.budget)} budget left`)}
         </div>
       </div>
-      <div className="review-side">
-        <span className="review-amount">{formatCurrency(c.spent)}</span>
-        {diff !== null && notable(diff, c.average) && <span className={`review-chip ${diff > 0 ? 'warn' : 'good'}`}>{signed(diff)} vs usual</span>}
+      <div className="item-side">
+        <span className="item-amount">{formatCurrency(c.spent)}</span>
+        {diff !== null && notable(diff, c.average) && <span className={`chip ${diff > 0 ? 'warn' : 'good'}`}>{signed(diff)} vs usual</span>}
       </div>
     </div>
   );
@@ -216,12 +216,12 @@ export default function Review({ data }) {
         {items.length === 0 ? (
           <p className="muted">Nothing unusual: no price increases, unusual charges or new recurring charges.</p>
         ) : items.map((i) => (
-          <div key={i.key} className="review-row">
-            <div className="review-main">
-              <div className="review-title"><span className={`review-chip ${i.tone}`}>{i.chip}</span>{i.name}</div>
-              <div className="review-meta">{i.detail}</div>
+          <div key={i.key} className="item-row">
+            <div className="item-main">
+              <div className="item-title"><span className={`chip ${i.tone}`}>{i.chip}</span>{i.name}</div>
+              <div className="item-meta">{i.detail}</div>
             </div>
-            <div className="review-side"><span className="review-amount">{formatCurrency(i.amount)}</span></div>
+            <div className="item-side"><span className="item-amount">{formatCurrency(i.amount)}</span></div>
           </div>
         ))}
       </div>
@@ -245,24 +245,24 @@ export default function Review({ data }) {
           {plan.planSet.takeHome && plan.planSet.spending ? ' (your settings)' : ' (your settings, else your average of the last 12 months)'}.
           The projection pays the mortgage separately.
         </p>
-        <div className="review-row">
-          <div className="review-main"><div className="review-title">Take-home</div><div className="review-meta">projection {formatCurrency(plan.planTakeHome)}</div></div>
-          <div className="review-side">
-            <span className="review-amount">{formatCurrency(plan.takeHome)}</span>
-            {review.complete && <span className={`review-chip ${plan.takeHome >= plan.planTakeHome ? 'good' : 'warn'}`}>{signed(plan.takeHome - plan.planTakeHome)}</span>}
+        <div className="item-row">
+          <div className="item-main"><div className="item-title">Take-home</div><div className="item-meta">projection {formatCurrency(plan.planTakeHome)}</div></div>
+          <div className="item-side">
+            <span className="item-amount">{formatCurrency(plan.takeHome)}</span>
+            {review.complete && <span className={`chip ${plan.takeHome >= plan.planTakeHome ? 'good' : 'warn'}`}>{signed(plan.takeHome - plan.planTakeHome)}</span>}
           </div>
         </div>
-        <div className="review-row">
-          <div className="review-main"><div className="review-title">Spending without the mortgage</div><div className="review-meta">projection {formatCurrency(plan.planSpending)}</div></div>
-          <div className="review-side">
-            <span className="review-amount">{formatCurrency(plan.spending)}</span>
-            {review.complete && <span className={`review-chip ${plan.spending <= plan.planSpending ? 'good' : 'warn'}`}>{signed(plan.spending - plan.planSpending)}</span>}
+        <div className="item-row">
+          <div className="item-main"><div className="item-title">Spending without the mortgage</div><div className="item-meta">projection {formatCurrency(plan.planSpending)}</div></div>
+          <div className="item-side">
+            <span className="item-amount">{formatCurrency(plan.spending)}</span>
+            {review.complete && <span className={`chip ${plan.spending <= plan.planSpending ? 'good' : 'warn'}`}>{signed(plan.spending - plan.planSpending)}</span>}
           </div>
         </div>
         {plan.mortgage > 0 && (
-          <div className="review-row">
-            <div className="review-main"><div className="review-title">Mortgage payments</div><div className="review-meta">matched by the loans&apos; payment keywords</div></div>
-            <div className="review-side"><span className="review-amount">{formatCurrency(plan.mortgage)}</span></div>
+          <div className="item-row">
+            <div className="item-main"><div className="item-title">Mortgage payments</div><div className="item-meta">matched by the loans&apos; payment keywords</div></div>
+            <div className="item-side"><span className="item-amount">{formatCurrency(plan.mortgage)}</span></div>
           </div>
         )}
       </div>
@@ -277,12 +277,12 @@ export default function Review({ data }) {
               {formatCurrency(upcomingTotal)} in charges that came on about the same day for the last three months, and yearly or quarterly subscriptions due.
             </p>
             {review.upcoming.map((b) => (
-              <div key={b.key} className="review-row">
-                <div className="review-main">
-                  <div className="review-title">{b.name}</div>
-                  <div className="review-meta">{shortDate(b.date)}{b.manual ? ' · from Subscriptions' : ''}</div>
+              <div key={b.key} className="item-row">
+                <div className="item-main">
+                  <div className="item-title">{b.name}</div>
+                  <div className="item-meta">{shortDate(b.date)}{b.manual ? ' · from Subscriptions' : ''}</div>
                 </div>
-                <div className="review-side"><span className="review-amount">{b.varies ? `about ${formatCurrency(b.amount)}` : formatCurrency(b.amount)}</span></div>
+                <div className="item-side"><span className="item-amount">{b.varies ? `about ${formatCurrency(b.amount)}` : formatCurrency(b.amount)}</span></div>
               </div>
             ))}
           </>

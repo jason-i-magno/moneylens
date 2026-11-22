@@ -169,6 +169,14 @@ export function useFinanceData(store) {
     }));
   }, [update]);
 
+  // A property's tax appeal details (property.tax), merged so quick edits don't overwrite each other
+  const updatePropertyTax = useCallback((id, changes) => {
+    update((d) => ({
+      ...d,
+      mortgages: { ...d.mortgages, properties: d.mortgages.properties.map((p) => (p.id === id ? { ...p, tax: { ...p.tax, ...changes } } : p)) },
+    }));
+  }, [update]);
+
   const deleteProperty = useCallback((id) => {
     update((d) => ({
       ...d,
@@ -393,6 +401,7 @@ export function useFinanceData(store) {
     deleteBankProfile,
     addProperty,
     updateProperty,
+    updatePropertyTax,
     deleteProperty,
     addLoan,
     updateLoan,

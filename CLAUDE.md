@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth without paid APIs. Transactions come in as **CSV files downloaded from the bank's website** or, optionally, through **Bank Sync** (Plaid's free Trial plan, via a small local server); balances and mortgage payments can also be read from **statement PDFs**. With an Anthropic API key, **Claude** can optionally read HSA receipts and write the monthly review's summary; without one, receipts are entered by hand and the review has no written summary. App data stays on the user's own computer: in one SQLite database through the app's local server, shared by every browser that opens it there (see [Storage](#storage)), or in the browser itself.
+MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth without paid APIs. Transactions come in as **CSV files downloaded from the bank's website** or, optionally, through **Bank Sync** (Plaid's free Trial plan, via a small local server); balances and mortgage payments can also be read from **statement PDFs**. With an Anthropic API key, **Claude** can optionally read HSA receipts, write the monthly review's summary and write a property tax protest letter; without one, receipts are entered by hand, the review has no written summary and the protest gets a plain letter. App data stays on the user's own computer: in one SQLite database through the app's local server, shared by every browser that opens it there (see [Storage](#storage)), or in the browser itself.
 
 Built-in support: CSV profiles for **US Bank checking, American Express, and Discover**; statement PDF parsers for **Lakeview/LoanCare**, **Rocket Mortgage** and **Valon/Carrington** (mortgage payments) and **US Bank** (account balances). Other banks work through manual column mapping or Bank Sync.
 
@@ -18,10 +18,10 @@ Built-in support: CSV profiles for **US Bank checking, American Express, and Dis
 - **Charts:** Recharts
 - **CSV parsing:** PapaParse
 - **PDF parsing:** pdfjs-dist (loaded on demand — only the Mortgage and Net Worth pages import it)
-- **Claude:** `@anthropic-ai/sdk` + `zod`, on the local server only (`server/anthropic.js`, used by the receipts and review APIs); browser code never imports them
+- **Claude:** `@anthropic-ai/sdk` + `zod`, on the local server only (`server/anthropic.js`, used by the receipts, review and appeal APIs); browser code never imports them
 - **Tests:** Vitest (unit tests for `src/utils` and `server/`, run with `TZ=Etc/GMT+10` (UTC−10) so UTC-vs-local date bugs show up)
 - **Lint:** ESLint 9 flat config with `react-hooks` and `react-refresh`
-- **Backend:** none, except the local server: the Bank Sync API (`server/plaidApi.js`), the data API (`server/dataApi.js`), the receipts API (`server/receiptsApi.js`) and the review API (`server/reviewApi.js`), Vite plugins that run inside `npm run dev` / `npm run preview`. Everything else is client-side and deploys as a static site (Vercel/Netlify); there Bank Sync just shows setup instructions, the HSA page and the review's summary say they need the server, and the data stays in the browser.
+- **Backend:** none, except the local server: the Bank Sync API (`server/plaidApi.js`), the data API (`server/dataApi.js`), the receipts API (`server/receiptsApi.js`), the review API (`server/reviewApi.js`) and the appeal API (`server/appealApi.js`), Vite plugins that run inside `npm run dev` / `npm run preview`. Everything else is client-side and deploys as a static site (Vercel/Netlify); there Bank Sync just shows setup instructions, the HSA page and the review's summary say they need the server, and the data stays in the browser.
 
 ## Commands
 
@@ -76,6 +76,7 @@ All rules live in `src/utils/transactions.js` — use these helpers, never re-im
 | `/trends` | Trends | Spending by category, income by category and net (income / spending / net), each with series toggles, monthly or daily; each period's own total as bars, or the running total (Cumulative) as lines. Builders in `src/utils/trends.js` |
 | `/budgets` | Budgets | Monthly cap per spending category (not Transfers) for any month (month picker): totals (budgeted, spent in budgeted categories, left or over, spending without a budget), each category's amount left or over, and this month's pace (cards and a marker on each bar where an even pace would be by today). Each category shows its average over the last 6 full months, which the Set Budget form offers as the amount. Helpers in `src/utils/budgets.js` |
 | `/mortgage` | Mortgage | Properties, loans, payments; amortization vs. actual and the new trajectory; extra-payment impact and calculator; combined view across a refi; statement PDF import; JSON import/export; delete payments/loans/properties |
+| `/property-tax` | Property Tax | A property's tax protest (below), opened from its card on the Mortgage page (`?property=`): the assessor's rules, the notice's value and the tax rate, the home's size, evidence about the home, comparable sales (CSV import or by hand), the value they support, the savings, the deadline, and a protest letter |
 | `/net-worth` | Net Worth | Accounts (assets/liabilities) with balance snapshots; live balances for accounts linked to a bank profile; mortgage loans and properties included automatically; US Bank statement PDF import; balance history CSV import per account; paycheck contributions for accounts that can't be linked (a 401(k)); a projection of net worth years ahead with adjustable assumptions |
 | `/hsa` | HSA Receipts | Receipts for medical expenses paid outside the HSA, to reimburse later (below): upload photos or PDFs, read by Claude when set up and checked before saving; link each to the payment that paid it; mark reimbursed; totals; health payments without a receipt |
 | `/import` | Import | CSV import wizard (below) |
@@ -158,6 +159,16 @@ The month is worked out in the browser from the live data (`buildMonthlyReview` 
 - **Expected next month** (`expectedBills`): merchants whose largest charge in each of the last 3 months came within 6 days of the same day of the month, at the latest amount when the two before it were the same (a fixed price, perhaps just changed), else about the average; plus quarterly and yearly manual subscriptions due (monthly ones show up in the charges, or come out of a paycheck).
 - **Written summary** (`server/reviewApi.js`, `/api/review/*`: `status`, `get`, `write`, `test-notify`): Claude writes a headline, a few sentences and up to four things to look at from `reviewFacts(review)` (whole dollars, category names, trimmed lists), kept in the `review_summaries` table with a hash of those facts. Last month's is written the first time the page opens after the month ends; other months, and figures that changed since, wait for Write Summary or Rewrite, so nothing is paid for unasked. Two windows asking at once share one request. It sends the figures, merchant names included, to Anthropic, with the same key as receipts.
 - **Notification:** with `MONEYLENS_NTFY_TOPIC` (optional `MONEYLENS_NTFY_SERVER`, `MONEYLENS_NTFY_TOKEN`) the server posts to ntfy on the 2nd of each month from 9:00 local time, once the month's last charges have posted ("Your October 2026 money review is ready."), opening `MONEYLENS_APP_URL/review?month=…` when that's set. `review_notices` records it so it goes once; a failed send is tried again every 30 minutes; turning it on mid-month sends last month's at once. It never carries amounts or merchants, since it passes through ntfy's server. It runs while the server does (the systemd service).
+
+## Property Tax (`/property-tax`)
+
+A protest argues what the home was worth on the assessor's appraisal date, from sales inside the window the assessor must use. Those rules differ by place, so they are settings on the property (`property.tax`), never constants in code: keep the code free of any one state's or county's dates, rates or forms. Helpers in `src/utils/propertyTax.js` (pure, tested).
+
+- **Comparable sales** (`analyzeComps`): each sale's price moved to the appraisal date by the market change a month (`trend`, percent, optional), per square foot, times the home's size = what it indicates for the home. A sale counts when it's inside the window, not unticked, and both sizes are known; one that's 25% larger or smaller, or built 15 years apart, is flagged. `supportedValue` = the median of the counted ones, with the lowest and highest.
+- **Evidence about the home** (`homeEvidence`): the purchase (from the property, when inside the window) and added appraisals or earlier sales, adjusted the same way. The letter uses only evidence below the notice's value.
+- **Savings** (`taxImpact`): the tax rate is the last bill over the value it was based on (else a rate entered), times the reduction, times the years a value lasts. The value asked for is the one set, else the comparables' median, else the newest appraisal.
+- **CSV import** (`parseCompsCsv`): columns found by header (a listing site's sold-homes export, an assessor's sales list saved as CSV); rows without an address, sale date or price are skipped; sales outside the window come in unticked; the same address and date isn't added twice.
+- **Letter:** `appealLetter(appealFacts(...))` writes a plain one; with an Anthropic key, Write with Claude (`server/appealApi.js`, `/api/appeal/*`: `status`, `write`) writes a letter and a short reason for an online form from the same facts (the address included). The text is saved on the property and stays editable.
 
 ## Storage
 
@@ -342,7 +353,7 @@ One JSON document, the same wherever it's stored (a version in the server's data
 
 - `type` exists only on imported and synced transactions; `isSubscription` is set on import (and by re-categorize).
 - `importedFrom` is the profile ID of the file the row came from, `"manual"` for an unsaved manual mapping, or a Bank Sync account's `target`.
-- `merchantName` and `plaidCategory` are present only when Plaid supplied them; `pairedTransfer: true` only on matched Bank Sync transfers; `transferAccountId` only on transfers linked to a Net Worth account; an account's `paycheckKeywords` and `paycheckContribution` only on assets that follow paychecks; `netWorth.projection` only once a projection setting is changed, and each of its keys only when set (otherwise the default or the figure worked out from the data); a mortgage payment's `activity` only when its statement listed dated payments; a loan's `pastServicers` only after a servicing transfer; `hsa` only once a receipt is added (a receipt's `transactionId`, file fields, `readBy` and `reimbursed*` only when set); `categorySetByUser: true` only on categories the user chose (see Auto-Categorization). Optional fields whose absence is the right default for old data need no migration.
+- `merchantName` and `plaidCategory` are present only when Plaid supplied them; `pairedTransfer: true` only on matched Bank Sync transfers; `transferAccountId` only on transfers linked to a Net Worth account; an account's `paycheckKeywords` and `paycheckContribution` only on assets that follow paychecks; `netWorth.projection` only once a projection setting is changed, and each of its keys only when set (otherwise the default or the figure worked out from the data); a mortgage payment's `activity` only when its statement listed dated payments; a loan's `pastServicers` only after a servicing transfer; a property's `tax` only once its Property Tax page is used (`{ appraisalDate, salesFrom, salesTo, deadline, years, trend, parcel, noticeValue, requested, lastTax, lastTaxValue, rate, sqft, beds, baths, yearBuilt, comps: [{ id, address, saleDate, price, sqft, beds, baths, yearBuilt, include }], evidence: [{ id, kind: 'appraisal' | 'sale', date, value, notes }], letter, reason, letterBy, letterAt }`, each key only when set); `hsa` only once a receipt is added (a receipt's `transactionId`, file fields, `readBy` and `reimbursed*` only when set); `categorySetByUser: true` only on categories the user chose (see Auto-Categorization). Optional fields whose absence is the right default for old data need no migration.
 
 ### Schema versions and migration
 
@@ -350,7 +361,7 @@ One JSON document, the same wherever it's stored (a version in the server's data
 
 ### ID generation
 
-Always use `makeId(prefix)` from `src/utils/ids.js` (`tx_`, `sub_`, `prop_`, `loan_`, `mpay_`, `acct_`, `snap_`, `chg_`, `rcpt_`). It returns `prefix_<Date.now()>` and appends `_N` when called more than once in the same millisecond. Batch operations use one `makeId` plus an index (`tx_1711234567890_0`, `_1`, …). Never build IDs from raw `Date.now()` in a loop — that produced duplicate IDs (and deleting one record deleted all of them). Call `makeId` outside `setState` updaters (see `applyPlaidSync`): React may run an updater twice.
+Always use `makeId(prefix)` from `src/utils/ids.js` (`tx_`, `sub_`, `prop_`, `loan_`, `mpay_`, `acct_`, `snap_`, `chg_`, `rcpt_`, `comp_`, `evid_`). It returns `prefix_<Date.now()>` and appends `_N` when called more than once in the same millisecond. Batch operations use one `makeId` plus an index (`tx_1711234567890_0`, `_1`, …). Never build IDs from raw `Date.now()` in a loop — that produced duplicate IDs (and deleting one record deleted all of them). Call `makeId` outside `setState` updaters (see `applyPlaidSync`): React may run an updater twice.
 
 ## Project Structure
 
@@ -370,6 +381,7 @@ moneylens/
 │   ├── anthropic.js               # Claude client, its errors, one structured-output request (receipts and review APIs)
 │   ├── receiptsApi.js             # HSA receipts API: files in the database, reading with Claude, Vite plugin
 │   ├── reviewApi.js               # Monthly review API: summaries by Claude, ntfy notification, Vite plugin
+│   ├── appealApi.js               # Property tax protest letter by Claude, Vite plugin
 │   └── *.test.js
 └── src/
     ├── main.jsx                   # Opens the storage, then ErrorBoundary + BrowserRouter + App
@@ -398,6 +410,8 @@ moneylens/
     │   ├── receiptsClient.js      # Browser calls to /api/receipts
     │   ├── review.js              # Monthly review: totals, merchant matching, price increases, unusual and new recurring charges, expected bills
     │   ├── reviewClient.js        # Browser calls to /api/review
+    │   ├── propertyTax.js         # Property tax protest: comparable sales, evidence, savings, CSV import, plain letter
+    │   ├── appealClient.js        # Browser calls to /api/appeal
     │   ├── localApi.js            # POST + JSON to the local APIs, errors with codes
     │   ├── mortgageCalculations.js
     │   ├── mortgagePdfParser.js   # Lakeview/Rocket/Valon mortgage + US Bank statement PDFs
@@ -432,7 +446,7 @@ moneylens/
     │   └── ImportPreviewTable.jsx
     └── pages/
         ├── Dashboard.jsx  Review.jsx  Subscriptions.jsx  Spending.jsx  Income.jsx  Trends.jsx
-        ├── Budgets.jsx    Mortgage.jsx       NetWorth.jsx  HsaReceipts.jsx  Import.jsx  BankSync.jsx  Settings.jsx
+        ├── Budgets.jsx    Mortgage.jsx       PropertyTax.jsx  NetWorth.jsx  HsaReceipts.jsx  Import.jsx  BankSync.jsx  Settings.jsx
 ```
 
 ## Coding Conventions
@@ -469,6 +483,7 @@ Not built yet (build only when asked):
 - Dashboard budget markers are full-height reference lines, not per-bar
 - "Detected from Imports" monthly estimate averages charges without normalizing frequency or excluding cancelled subscriptions
 - The local server has no login (Tailscale is the only gate), and two windows editing at once don't merge: the later save is dropped
+- Property tax: comparables are compared by price per square foot only (no adjustments for lot, basement, garage or condition), and the protest is filed by the owner (no filing from the app)
 - Monthly review: notifications only through ntfy (no email); merchant matching works from descriptions, so a merchant whose descriptions change can look new, and yearly charges aren't expected unless they're manual subscriptions
 - HSA receipts: no HSA opening date (expenses from before it aren't eligible; the list of payments without a receipt just looks back 2 years), no adding receipts by email, and the files aren't in exports
 - Bank Sync uses only Plaid's Transactions product: no Liabilities (mortgage details still come from statement PDFs) or Investments (brokerages may not appear in Link), no webhooks, no on-demand `/transactions/refresh`
