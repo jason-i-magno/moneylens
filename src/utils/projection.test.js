@@ -259,6 +259,7 @@ describe('account deposits and spending an account down', () => {
     expect(describeChange(plan('d', { kind: 'contribution', accountId: 'edu', amount: 500, every: 12, times: 3, match: 100 }), nameOf))
       .toBe('College Fund +$500 a year, matched 100%, 3 times from Mar 2026');
     expect(describeChange(plan('s', { kind: 'spendAccount', accountId: 'edu', years: 4 }), nameOf)).toBe('College Fund spent over 4 years from Mar 2026');
+    expect(describeChange(plan('m', { kind: 'spendAccount', accountId: 'edu', years: 1 / 12 }), nameOf)).toBe('College Fund spent over 1 month from Mar 2026');
     expect(describeChange(plan('t', { kind: 'periodCost', amount: 30000, years: 4, accountId: 'edu', growth: 3.5 }), nameOf))
       .toBe('Cost $30,000 a year for 4 years, paid first from College Fund, rising 3.5% a year from Mar 2026');
   });

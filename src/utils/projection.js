@@ -124,6 +124,12 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 const dollars = (n) => formatCurrency(Math.abs(n)).replace(/\.00$/, '');
 const EVERY_TEXT = { 1: 'a month', 3: 'a quarter', 6: 'twice a year', 12: 'a year' };
+// '4 years', '1 year', '1 month' (under a year, in whole months)
+const spanText = (years) => {
+  if (years >= 1) return `${years} year${years !== 1 ? 's' : ''}`;
+  const months = Math.max(1, Math.round(years * 12));
+  return `${months} month${months !== 1 ? 's' : ''}`;
+};
 const monthIndex = (month) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1;
 const isMonth = (m) => typeof m === 'string' && MONTH_RE.test(m);
 const signed = (n) => `${n < 0 ? '\u2212' : '+'}${dollars(n)}`;
@@ -135,7 +141,7 @@ export function changeEffectText(c, nameOf = () => 'An account') {
     const times = c.times ? `, ${c.times} time${c.times !== 1 ? 's' : ''}` : '';
     return `${nameOf(c.accountId)} +${dollars(c.amount)} ${EVERY_TEXT[c.every]}${c.match ? `, matched ${c.match}%` : ''}${times}`;
   }
-  if (c.kind === 'spendAccount') return `${nameOf(c.accountId)} spent over ${c.years} year${c.years !== 1 ? 's' : ''}`;
+  if (c.kind === 'spendAccount') return `${nameOf(c.accountId)} spent over ${spanText(c.years)}`;
   if (c.kind === 'payOff') return `${nameOf(c.debtId)} paid ${c.amount ? dollars(c.amount) : 'off'} from ${nameOf(c.accountId)}`;
   if (c.kind === 'periodCost') {
     const from = c.accountId ? `, paid first from ${nameOf(c.accountId)}` : '';
