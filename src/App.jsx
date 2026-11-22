@@ -5,6 +5,7 @@ import { useFinanceData } from './hooks/useFinanceData';
 import { usePlaidSync } from './hooks/usePlaidSync';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Review = lazy(() => import('./pages/Review'));
 const Subscriptions = lazy(() => import('./pages/Subscriptions'));
 const Spending = lazy(() => import('./pages/Spending'));
 const Income = lazy(() => import('./pages/Income'));
@@ -37,6 +38,7 @@ export default function App({ store }) {
         }
       >
         <Route path="/dashboard" element={<Dashboard data={data} />} />
+        <Route path="/review" element={<Review data={data} />} />
         <Route
           path="/subscriptions"
           element={

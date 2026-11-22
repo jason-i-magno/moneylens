@@ -117,7 +117,7 @@ describe('reading a receipt', () => {
 
   it('turns a refusal or an unparsed reply into a message to enter the details by hand', async () => {
     const refused = await createReceiptReader(fakeClient({ stop_reason: 'refusal', parsed_output: null }));
-    await expect(refused({ mime: 'application/pdf', data: PDF })).rejects.toMatchObject({ code: 'REFUSED', status: 422 });
+    await expect(refused({ mime: 'application/pdf', data: PDF })).rejects.toMatchObject({ code: 'REFUSED', status: 422, message: 'Claude declined. Enter the receipt details by hand.' });
     const empty = await createReceiptReader(fakeClient({ stop_reason: 'max_tokens', parsed_output: null }));
     await expect(empty({ mime: 'application/pdf', data: PDF })).rejects.toMatchObject({ code: 'UNREADABLE' });
   });

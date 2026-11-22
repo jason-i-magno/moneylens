@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth without paid APIs. Transactions come in as **CSV files downloaded from the bank's website** or, optionally, through **Bank Sync** (Plaid's free Trial plan, via a small local server); balances and mortgage payments can also be read from **statement PDFs**. HSA receipts can optionally be read by **Claude** (needs an Anthropic API key; otherwise they're entered by hand). App data stays on the user's own computer: in one SQLite database through the app's local server, shared by every browser that opens it there (see [Storage](#storage)), or in the browser itself.
+MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth without paid APIs. Transactions come in as **CSV files downloaded from the bank's website** or, optionally, through **Bank Sync** (Plaid's free Trial plan, via a small local server); balances and mortgage payments can also be read from **statement PDFs**. With an Anthropic API key, **Claude** can optionally read HSA receipts and write the monthly review's summary; without one, receipts are entered by hand and the review has no written summary. App data stays on the user's own computer: in one SQLite database through the app's local server, shared by every browser that opens it there (see [Storage](#storage)), or in the browser itself.
 
 Built-in support: CSV profiles for **US Bank checking, American Express, and Discover**; statement PDF parsers for **Lakeview/LoanCare**, **Rocket Mortgage** and **Valon/Carrington** (mortgage payments) and **US Bank** (account balances). Other banks work through manual column mapping or Bank Sync.
 
@@ -18,10 +18,10 @@ Built-in support: CSV profiles for **US Bank checking, American Express, and Dis
 - **Charts:** Recharts
 - **CSV parsing:** PapaParse
 - **PDF parsing:** pdfjs-dist (loaded on demand — only the Mortgage and Net Worth pages import it)
-- **Receipt reading:** `@anthropic-ai/sdk` + `zod`, on the local server only (`server/receiptsApi.js`); browser code never imports them
+- **Claude:** `@anthropic-ai/sdk` + `zod`, on the local server only (`server/anthropic.js`, used by the receipts and review APIs); browser code never imports them
 - **Tests:** Vitest (unit tests for `src/utils` and `server/`, run with `TZ=Etc/GMT+10` (UTC−10) so UTC-vs-local date bugs show up)
 - **Lint:** ESLint 9 flat config with `react-hooks` and `react-refresh`
-- **Backend:** none, except the local server: the Bank Sync API (`server/plaidApi.js`), the data API (`server/dataApi.js`) and the receipts API (`server/receiptsApi.js`), Vite plugins that run inside `npm run dev` / `npm run preview`. Everything else is client-side and deploys as a static site (Vercel/Netlify); there Bank Sync just shows setup instructions, the HSA page says it needs the server, and the data stays in the browser.
+- **Backend:** none, except the local server: the Bank Sync API (`server/plaidApi.js`), the data API (`server/dataApi.js`), the receipts API (`server/receiptsApi.js`) and the review API (`server/reviewApi.js`), Vite plugins that run inside `npm run dev` / `npm run preview`. Everything else is client-side and deploys as a static site (Vercel/Netlify); there Bank Sync just shows setup instructions, the HSA page and the review's summary say they need the server, and the data stays in the browser.
 
 ## Commands
 
@@ -69,6 +69,7 @@ All rules live in `src/utils/transactions.js` — use these helpers, never re-im
 | Route | Page | What it does |
 |---|---|---|
 | `/dashboard` | Dashboard | Current month: income, spending, remaining (= income − spending); recurring-costs card (manual subscriptions, informational); spending-by-category bar chart with budget markers; 5 most recent transactions (read-only) |
+| `/review` | Monthly Review | One month (last month by default): totals against last month, the usual and the projection; categories against their usual and budgets; price increases, unusual and new recurring charges; net worth change; bills expected next month; a summary written by Claude; a phone notification when it's ready (below) |
 | `/subscriptions` | Subscriptions | Manual subscriptions (add/edit/delete, normalized monthly cost) plus "Detected from Imports": imported transactions with `isSubscription`, grouped by merchant |
 | `/spending` | Spending | Debits by month with category and subscription filters; add/edit/delete; header total excludes transfers unless the Transfers filter is selected |
 | `/income` | Income | Credits by month; edit/delete; header splits income from transfers-in (not counted) |
@@ -147,6 +148,17 @@ Medical expenses paid outside the HSA can be reimbursed from it tax-free any tim
 - **Paid with** (`suggestPayments`): spending of the same amount to the cent, from 7 days before the service date to 6 months after (bills come later), not linked to another receipt; Health first, then the closest date. Without a service date, the last 2 years, newest first.
 - **Totals** (`receiptTotals`): can reimburse = not reimbursed and not marked ineligible; "not sure" counts there and is also shown separately. **Payments without a receipt** (`missingReceipts`): Health spending from the last 2 years with no receipt linked.
 
+## Monthly Review (`/review`)
+
+The month is worked out in the browser from the live data (`buildMonthlyReview` in `src/utils/review.js`, pure and tested), so it includes the latest sync. The page opens on last month; `?month=YYYY-MM` opens another.
+
+- **Totals:** income, spending and kept (income − spending) next to last month and the usual (the average of the 6 months before, `averageSpending`); each category against its usual and budget (shown when it has spending, a budget, or a usual of $50 or more); net worth at the end of the month and its change (`netWorthChange`, from the Net Worth page's history).
+- **Against your projection** (`planComparison`): the month's take-home and spending without mortgage payments, worked out like the projection's baseline (`cashFlowBaseline` for one month, with `baselineLoans`), next to the projection's monthly figures (its settings, else its default).
+- **Worth a look.** Charges are grouped by `merchantKey`: the bank's description without a card-processor prefix, anything after a `*` (order numbers), words with digits and filler words ("USA", "Mktpl", "Inc"), first three words left. Price increases (`priceIncreases`): one charge this month after two months at exactly the same lower amount, so bills that vary never match. Unusual charges (`unusualCharges`): from a merchant not seen in a year and $100 or more (once there are 3 months of history), or at least twice the merchant's median and $50 more and above all its charges in the year before, so a mortgage with smaller extra-principal payments isn't flagged. New recurring (`newRecurring`): once this month and once last month on about the same day and amount and not in the 7 months before, or a subscription charged for the first time in a year.
+- **Expected next month** (`expectedBills`): merchants whose largest charge in each of the last 3 months came within 6 days of the same day of the month, at the latest amount when the two before it were the same (a fixed price, perhaps just changed), else about the average; plus quarterly and yearly manual subscriptions due (monthly ones show up in the charges, or come out of a paycheck).
+- **Written summary** (`server/reviewApi.js`, `/api/review/*`: `status`, `get`, `write`, `test-notify`): Claude writes a headline, a few sentences and up to four things to look at from `reviewFacts(review)` (whole dollars, category names, trimmed lists), kept in the `review_summaries` table with a hash of those facts. Last month's is written the first time the page opens after the month ends; other months, and figures that changed since, wait for Write Summary or Rewrite, so nothing is paid for unasked. Two windows asking at once share one request. It sends the figures, merchant names included, to Anthropic, with the same key as receipts.
+- **Notification:** with `MONEYLENS_NTFY_TOPIC` (optional `MONEYLENS_NTFY_SERVER`, `MONEYLENS_NTFY_TOKEN`) the server posts to ntfy on the 2nd of each month from 9:00 local time, once the month's last charges have posted ("Your October 2026 money review is ready."), opening `MONEYLENS_APP_URL/review?month=…` when that's set. `review_notices` records it so it goes once; a failed send is tried again every 30 minutes; turning it on mid-month sends last month's at once. It never carries amounts or merchants, since it passes through ntfy's server. It runs while the server does (the systemd service).
+
 ## Storage
 
 `src/utils/storage.js` (browser) and `server/dataApi.js` (server). `main.jsx` awaits `openStorage()` before rendering the app, so everything that runs on open (Bank Sync's sync-on-open) sees the data; `StartupScreen` shows meanwhile, or with Try Again when the server can't be reached. `useFinanceData(store)` takes the store and is the only code that saves: never read or write `localStorage` directly.
@@ -155,7 +167,7 @@ Medical expenses paid outside the HSA can be reimbursed from it tax-free any tim
 - **No silent fallback.** Once the server has answered in a browser, `moneylens-server` is set in its localStorage, and from then on an unreachable server shows the start-up error instead of the browser's own (old or empty) data. When a browser starts using the server, its own copy moves to `moneylens-data-before-server` (Settings offers to download or delete it); it's never used again.
 - **Saves** (`createSaver`): the whole document, one save at a time, gzipped (`CompressionStream`), each on top of the version the last one made (`baseRev`). A newer change replaces one still waiting. A failed save is retried with backoff, with a "Not saved yet" banner and a warning on closing the page. If another window saved first, the server answers 409 `CONFLICT`: the window loads the latest version and drops its unsaved change (it can't be merged), with a notice. Windows load what others saved on focus, on coming back online, and every 60 s while visible (`load` with `since`, which answers `unchanged` when nothing is newer).
 - **Versions:** every save is a gzipped row in the `versions` table; the newest 100 and the last of each of the 60 latest (UTC) days are kept. Settings → Storage → Show Earlier Versions lists them (time, counts, note) and Restore saves an old one as a new version, so a restore can be undone too. Replacing everything (import, reset, restore, move) goes through `replaceData`, which waits for the save before the page reloads, and gives the version a note.
-- **Database file:** `~/.config/moneylens/moneylens.db` (`MONEYLENS_DB` overrides; it also holds HSA receipt files), created 0600 next to the Bank Sync tokens: outside the repo, so it can't be committed or served. `node:sqlite` needs Node 22.13+ and prints an ExperimentalWarning; it's imported only when the server starts, never by `vite build`.
+- **Database file:** `~/.config/moneylens/moneylens.db` (`MONEYLENS_DB` overrides; it also holds HSA receipt files and the review's summaries), created 0600 next to the Bank Sync tokens: outside the repo, so it can't be committed or served. `node:sqlite` needs Node 22.13+ and prints an ExperimentalWarning; it's imported only when the server starts, never by `vite build`.
 - **From another device (Tailscale):** `tailscale serve --bg --https=8443 http://localhost:5173` (needs sudo, or `tailscale set --operator=$USER` once) gives the app an HTTPS address only the tailnet reaches, and `MONEYLENS_ALLOWED_HOSTS` in `.env.local` names it, for Vite's `allowedHosts` and both APIs' host check. The tailnet name is the user's, so it goes only in `.env.local`. There's no login: anything that can reach the address can read and change everything.
 - **As a service:** a systemd user unit can keep the server running (`loginctl enable-linger` makes it start at boot):
   ```ini
@@ -355,7 +367,9 @@ moneylens/
 │   ├── http.js                    # Request checks (host, origin, JSON POST) and JSON/gzip helpers for both APIs
 │   ├── plaidApi.js                # Bank Sync API: Plaid calls, token store, Vite plugin
 │   ├── dataApi.js                 # Data API: the SQLite store (versions, conflicts), Vite plugin
+│   ├── anthropic.js               # Claude client, its errors, one structured-output request (receipts and review APIs)
 │   ├── receiptsApi.js             # HSA receipts API: files in the database, reading with Claude, Vite plugin
+│   ├── reviewApi.js               # Monthly review API: summaries by Claude, ntfy notification, Vite plugin
 │   └── *.test.js
 └── src/
     ├── main.jsx                   # Opens the storage, then ErrorBoundary + BrowserRouter + App
@@ -382,6 +396,9 @@ moneylens/
     │   ├── plaidClient.js         # Browser calls to /api/plaid and the Plaid Link loader
     │   ├── hsa.js                 # HSA receipts: totals, payment suggestions, payments without a receipt
     │   ├── receiptsClient.js      # Browser calls to /api/receipts
+    │   ├── review.js              # Monthly review: totals, merchant matching, price increases, unusual and new recurring charges, expected bills
+    │   ├── reviewClient.js        # Browser calls to /api/review
+    │   ├── localApi.js            # POST + JSON to the local APIs, errors with codes
     │   ├── mortgageCalculations.js
     │   ├── mortgagePdfParser.js   # Lakeview/Rocket/Valon mortgage + US Bank statement PDFs
     │   ├── migrate.js             # Default data, schema version, migrations
@@ -414,7 +431,7 @@ moneylens/
     │   ├── ColumnMapper.jsx
     │   └── ImportPreviewTable.jsx
     └── pages/
-        ├── Dashboard.jsx  Subscriptions.jsx  Spending.jsx  Income.jsx  Trends.jsx
+        ├── Dashboard.jsx  Review.jsx  Subscriptions.jsx  Spending.jsx  Income.jsx  Trends.jsx
         ├── Budgets.jsx    Mortgage.jsx       NetWorth.jsx  HsaReceipts.jsx  Import.jsx  BankSync.jsx  Settings.jsx
 ```
 
@@ -452,6 +469,7 @@ Not built yet (build only when asked):
 - Dashboard budget markers are full-height reference lines, not per-bar
 - "Detected from Imports" monthly estimate averages charges without normalizing frequency or excluding cancelled subscriptions
 - The local server has no login (Tailscale is the only gate), and two windows editing at once don't merge: the later save is dropped
+- Monthly review: notifications only through ntfy (no email); merchant matching works from descriptions, so a merchant whose descriptions change can look new, and yearly charges aren't expected unless they're manual subscriptions
 - HSA receipts: no HSA opening date (expenses from before it aren't eligible; the list of payments without a receipt just looks back 2 years), no adding receipts by email, and the files aren't in exports
 - Bank Sync uses only Plaid's Transactions product: no Liabilities (mortgage details still come from statement PDFs) or Investments (brokerages may not appear in Link), no webhooks, no on-demand `/transactions/refresh`
 

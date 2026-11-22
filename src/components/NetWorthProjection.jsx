@@ -8,7 +8,7 @@ import { formatCompactCurrency, formatCurrency } from '../constants/categories';
 import { chartTooltipProps } from '../constants/chartTooltip';
 import { currentMonth, formatMonth, formatShortMonth as shortMonth } from '../utils/dates';
 import {
-  RANGE_POINTS, cashFlowBaseline, changeEffectText, resolveChanges, monthlyPaycheckContribution, projectNetWorth, projectionLoans,
+  RANGE_POINTS, baselineLoans, cashFlowBaseline, changeEffectText, resolveChanges, monthlyPaycheckContribution, projectNetWorth, projectionLoans,
   projectionMilestones, resolveProjectionSettings,
 } from '../utils/projection';
 
@@ -120,15 +120,7 @@ export default function NetWorthProjection({ accounts, mortgages, transactions, 
 
   // Figures worked out from the data, used wherever the settings don't say otherwise
   const derived = useMemo(() => {
-    const escrowOf = (loan) => {
-      const latest = mortgages.payments.filter((p) => p.loanId === loan.id).sort((a, b) => (b.forMonth || '').localeCompare(a.forMonth || ''))[0];
-      return latest?.escrow || 0;
-    };
-    const baseline = cashFlowBaseline(
-      transactions,
-      mortgages.loans.map((l) => ({ ...l, scheduled: (l.monthlyPI || 0) + escrowOf(l) })),
-      month
-    );
+    const baseline = cashFlowBaseline(transactions, baselineLoans(mortgages), month);
     const balances = Object.fromEntries(accounts.filter((a) => a.id.startsWith(LOAN_PREFIX)).map((a) => [a.id.slice(LOAN_PREFIX.length), a.balance]));
     const loans = projectionLoans(mortgages.loans, mortgages.payments, balances);
     const contributions = Object.fromEntries(

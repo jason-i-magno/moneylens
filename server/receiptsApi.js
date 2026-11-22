@@ -2,17 +2,17 @@
 // and reading a receipt with Claude. Runs inside the Vite dev/preview server like the data API. Each
 // receipt's details live in the app's data (data.hsa.receipts); the browser never sees the API key.
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ApiError, actionName, checkRequest, parseHostList, readJson, sendError, sendJson } from './http.js';
 import { DEFAULT_DATA_FILE } from './dataApi.js';
+import { MODEL, anthropicClient, asApiError, notConfigured, parseWithClaude } from './anthropic.js';
 
 // What can be stored and read: what Claude accepts as images, plus PDFs
 export const RECEIPT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
 export const MAX_FILE_BYTES = 15 * 1024 * 1024;
 const MAX_BODY_BYTES = 22 * 1024 * 1024; // a 15 MB file as base64, plus the JSON around it
-export const RECEIPT_MODEL = 'claude-opus-5-5';
+export const RECEIPT_MODEL = MODEL;
 
 // The first bytes of each type, so a file can't be stored under a type it isn't
 const SIGNATURES = {
@@ -85,41 +85,16 @@ export async function createReceiptReader({ client }) {
   return async function read(file) {
     const source = { type: 'base64', media_type: file.mime, data: Buffer.from(file.data).toString('base64') };
     const document = file.mime === 'application/pdf' ? { type: 'document', source } : { type: 'image', source };
-    const response = await client.beta.messages.parse({
-      model: RECEIPT_MODEL,
-      max_tokens: 16000,
-      // If the model declines, the API retries on a fallback model inside the same request
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
-      output_config: { effort: 'low', format: betaZodOutputFormat(Fields) },
+    return parseWithClaude(client, {
       system: SYSTEM,
-      messages: [{ role: 'user', content: [document, { type: 'text', text: 'Read this receipt.' }] }],
+      content: [document, { type: 'text', text: 'Read this receipt.' }],
+      format: betaZodOutputFormat(Fields),
+      fallbackHint: 'Enter the receipt details by hand.',
     });
-    if (response.stop_reason === 'refusal') {
-      throw new ApiError('REFUSED', 'Claude declined to read this file. Enter its details by hand.', 422);
-    }
-    if (!response.parsed_output) {
-      throw new ApiError('UNREADABLE', "Claude couldn't read this receipt. Enter its details by hand.", 422);
-    }
-    return { ...response.parsed_output, model: response.model };
   };
 }
 
-// The Anthropic SDK's errors as answers the page can show; anything else passes through
-async function asApiError(err) {
-  if (err instanceof ApiError) return err;
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
-    return new ApiError('ANTHROPIC_AUTH', 'Anthropic rejected the API key. Check ANTHROPIC_API_KEY in .env.local.', 502);
-  }
-  if (err instanceof Anthropic.RateLimitError) return new ApiError('RATE_LIMITED', 'Claude is busy right now. Try again in a minute.', 503);
-  if (err instanceof Anthropic.APIConnectionError) return new ApiError('ANTHROPIC_UNREACHABLE', "Couldn't reach Claude. Check the internet connection.", 502);
-  if (err instanceof Anthropic.APIError) return new ApiError('ANTHROPIC_ERROR', `Claude returned an error: ${err.message}`, 502);
-  return err;
-}
-
-const NOT_CONFIGURED = 'Reading receipts needs an Anthropic API key: add ANTHROPIC_API_KEY to .env.local and restart the server '
-  + '(systemctl --user restart moneylens). Until then, enter receipt details by hand.';
+const NOT_CONFIGURED = `${notConfigured('Reading receipts')} Until then, enter receipt details by hand.`;
 
 const cleanName = (name) => (typeof name === 'string' && name.trim() ? name.trim().slice(0, 200) : 'receipt');
 
@@ -177,16 +152,6 @@ export function createReceiptsHandler({ store, openError, read, allowedHosts = [
   };
 }
 
-// Reading is set up when there's an API key (ANTHROPIC_API_KEY in .env.local or the environment) or an
-// `ant auth login` profile, which the SDK finds on its own
-const PROFILE_DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'anthropic');
-async function readerFor(vars) {
-  const apiKey = vars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (!apiKey && !process.env.ANTHROPIC_AUTH_TOKEN && !existsSync(PROFILE_DIR)) return null;
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  return createReceiptReader({ client: new Anthropic(apiKey ? { apiKey } : {}) });
-}
-
 // Vite plugin: mounts the API at /api/receipts on `npm run dev` and `npm run preview`. `vars`: MONEYLENS_DB,
 // MONEYLENS_ALLOWED_HOSTS and ANTHROPIC_API_KEY (never with a VITE_ prefix). `overrides.file` is for testing.
 export function receiptsApiPlugin(vars, overrides = {}) {
@@ -195,7 +160,9 @@ export function receiptsApiPlugin(vars, overrides = {}) {
     const file = overrides.file || vars.MONEYLENS_DB || DEFAULT_DATA_FILE;
     const opened = await openReceiptStore(file).then((store) => ({ store }), (openError) => ({ store: null, openError }));
     if (opened.openError) server.config.logger.error(`MoneyLens couldn't open ${file} for receipts: ${opened.openError.message}`);
-    server.middlewares.use('/api/receipts', createReceiptsHandler({ ...opened, read: await readerFor(vars), allowedHosts }));
+    const client = await anthropicClient(vars);
+    const read = client ? await createReceiptReader({ client }) : null;
+    server.middlewares.use('/api/receipts', createReceiptsHandler({ ...opened, read, allowedHosts }));
   };
   return { name: 'moneylens-receipts-api', configureServer: attach, configurePreviewServer: attach };
 }

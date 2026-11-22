@@ -356,6 +356,25 @@ tr.charted .projection-chart-link { color: var(--accent-purple); font-weight: 60
 .receipt-viewer { display: block; width: 100%; max-height: 75vh; object-fit: contain; border: 0; border-radius: var(--radius-sm); }
 iframe.receipt-viewer { height: 75vh; background: #fff; }
 
+/* === Monthly Review === */
+.review-summary { border: 1px solid color-mix(in srgb, var(--accent-purple) 25%, transparent); }
+.review-headline { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; }
+.review-summary-text { line-height: 1.55; }
+.review-look-list { margin: 12px 0 0 20px; line-height: 1.55; }
+.review-written { margin-top: 12px; font-size: 0.8rem; }
+.review-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.review-row:last-child { border-bottom: none; }
+.review-title { font-weight: 500; overflow-wrap: anywhere; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.review-icon { width: 1.4em; text-align: center; }
+.review-meta { color: var(--text-muted); font-size: 0.8rem; margin-top: 2px; overflow-wrap: anywhere; }
+.review-meta .over { color: var(--danger); }
+.review-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; }
+.review-amount { font-weight: 600; white-space: nowrap; }
+.review-chip { display: inline-block; font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.review-chip.warn { color: #f59e0b; background: #f59e0b21; }
+.review-chip.good { color: #7CE8A3; background: #7CE8A321; }
+.review-chip.info { color: var(--accent-purple); background: color-mix(in srgb, var(--accent-purple) 13%, transparent); }
+
 /* === Native Controls === */
 /* Every select gets the month picker's chevron and a dark open list, and number fields lose their spin arrows.
    This comes after the page styles so it layers on top of their padding and background color. */

@@ -28,14 +28,26 @@ export function resolveProjectionSettings(saved = {}) {
 
 const textOf = (tx) => `${tx.name} ${tx.merchantName || ''}`;
 
-// Average month of the 12 full months before `month` ('YYYY-MM'): money in (income) and spending, with
+// The loans as cashFlowBaseline takes them: each with its scheduled payment (P&I plus the escrow of its latest
+// statement), for the months a loan without payment keywords is assumed paid
+export function baselineLoans(mortgages) {
+  const escrowOf = (loan) => {
+    const latest = mortgages.payments
+      .filter((p) => p.loanId === loan.id)
+      .sort((a, b) => (b.forMonth || '').localeCompare(a.forMonth || ''))[0];
+    return latest?.escrow || 0;
+  };
+  return mortgages.loans.map((l) => ({ ...l, scheduled: (l.monthlyPI || 0) + escrowOf(l) }));
+}
+
+// Average month of the `count` (12) full months before `month` ('YYYY-MM'): money in (income) and spending, with
 // mortgage payments taken out of spending, since the projection pays the loans itself. Mortgage payments are
 // the ones matching a loan's payment keywords; for an active loan without keywords its scheduled payment
 // (P&I plus escrow) is taken out for each month since it started (`estimatedMortgage`). Months without any
 // transactions are left out of the average, so a few months of data give their own average.
 // loans: [{ paymentKeywords, status, startDate, scheduled }]
-export function cashFlowBaseline(transactions, loans, month) {
-  const from = addMonths(month, -12);
+export function cashFlowBaseline(transactions, loans, month, count = 12) {
+  const from = addMonths(month, -count);
   const to = addMonths(month, -1);
   const patterns = loans.flatMap((l) => (l.paymentKeywords || []).filter((k) => k.trim()).map(keywordRegex));
   const isMortgage = (tx) => patterns.some((re) => re.test(textOf(tx)));
