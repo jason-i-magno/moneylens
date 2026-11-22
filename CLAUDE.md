@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth without paid APIs. Transactions come in as **CSV files downloaded from the bank's website** or, optionally, through **Bank Sync** (Plaid's free Trial plan, via a small local server); balances and mortgage payments can also be read from **statement PDFs**. App data stays on the user's own computer: in one SQLite database through the app's local server, shared by every browser that opens it there (see [Storage](#storage)), or in the browser itself.
+MoneyLens is a personal finance tracker web app — a local-first alternative to apps like Rocket Money. It tracks spending, income, subscriptions, budgets, a mortgage, and net worth without paid APIs. Transactions come in as **CSV files downloaded from the bank's website** or, optionally, through **Bank Sync** (Plaid's free Trial plan, via a small local server); balances and mortgage payments can also be read from **statement PDFs**. HSA receipts can optionally be read by **Claude** (needs an Anthropic API key; otherwise they're entered by hand). App data stays on the user's own computer: in one SQLite database through the app's local server, shared by every browser that opens it there (see [Storage](#storage)), or in the browser itself.
 
 Built-in support: CSV profiles for **US Bank checking, American Express, and Discover**; statement PDF parsers for **Lakeview/LoanCare**, **Rocket Mortgage** and **Valon/Carrington** (mortgage payments) and **US Bank** (account balances). Other banks work through manual column mapping or Bank Sync.
 
@@ -18,9 +18,10 @@ Built-in support: CSV profiles for **US Bank checking, American Express, and Dis
 - **Charts:** Recharts
 - **CSV parsing:** PapaParse
 - **PDF parsing:** pdfjs-dist (loaded on demand — only the Mortgage and Net Worth pages import it)
+- **Receipt reading:** `@anthropic-ai/sdk` + `zod`, on the local server only (`server/receiptsApi.js`); browser code never imports them
 - **Tests:** Vitest (unit tests for `src/utils` and `server/`, run with `TZ=Etc/GMT+10` (UTC−10) so UTC-vs-local date bugs show up)
 - **Lint:** ESLint 9 flat config with `react-hooks` and `react-refresh`
-- **Backend:** none, except the local server: the Bank Sync API (`server/plaidApi.js`) and the data API (`server/dataApi.js`), Vite plugins that run inside `npm run dev` / `npm run preview`. Everything else is client-side and deploys as a static site (Vercel/Netlify); there Bank Sync just shows setup instructions and the data stays in the browser.
+- **Backend:** none, except the local server: the Bank Sync API (`server/plaidApi.js`), the data API (`server/dataApi.js`) and the receipts API (`server/receiptsApi.js`), Vite plugins that run inside `npm run dev` / `npm run preview`. Everything else is client-side and deploys as a static site (Vercel/Netlify); there Bank Sync just shows setup instructions, the HSA page says it needs the server, and the data stays in the browser.
 
 ## Commands
 
@@ -75,6 +76,7 @@ All rules live in `src/utils/transactions.js` — use these helpers, never re-im
 | `/budgets` | Budgets | Monthly cap per spending category (not Transfers) for any month (month picker): totals (budgeted, spent in budgeted categories, left or over, spending without a budget), each category's amount left or over, and this month's pace (cards and a marker on each bar where an even pace would be by today). Each category shows its average over the last 6 full months, which the Set Budget form offers as the amount. Helpers in `src/utils/budgets.js` |
 | `/mortgage` | Mortgage | Properties, loans, payments; amortization vs. actual and the new trajectory; extra-payment impact and calculator; combined view across a refi; statement PDF import; JSON import/export; delete payments/loans/properties |
 | `/net-worth` | Net Worth | Accounts (assets/liabilities) with balance snapshots; live balances for accounts linked to a bank profile; mortgage loans and properties included automatically; US Bank statement PDF import; balance history CSV import per account; paycheck contributions for accounts that can't be linked (a 401(k)); a projection of net worth years ahead with adjustable assumptions |
+| `/hsa` | HSA Receipts | Receipts for medical expenses paid outside the HSA, to reimburse later (below): upload photos or PDFs, read by Claude when set up and checked before saving; link each to the payment that paid it; mark reimbursed; totals; health payments without a receipt |
 | `/import` | Import | CSV import wizard (below) |
 | `/bank-sync` | Bank Sync | Connect banks through Plaid, choose where each account syncs, sync, reconnect, disconnect (below) |
 | `/settings` | Settings | Delete saved bank profiles; edit category keywords; re-categorize imported and synced transactions; storage (move this browser's data to the server; earlier versions and restore); export/import JSON; reset |
@@ -114,7 +116,7 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
 
 ## Bank Sync (`/bank-sync`) — Plaid
 
-**Where things live.** The Plaid keys are in `.env.local` (gitignored; template in `.env.example`; loaded in `vite.config.js` with `loadEnv(…, ['PLAID_', 'MONEYLENS_'])` — never give them a `VITE_` prefix, or Vite ships them to the browser): one `PLAID_CLIENT_ID`, one secret per environment (`PLAID_SECRET_SANDBOX`, `PLAID_SECRET_PRODUCTION`), and `PLAID_ENV` choosing between them. `resolvePlaidConfig` turns these into the API's config or a setup problem to show (a missing variable, or the retired single `PLAID_SECRET`, which is never guessed at). Per-bank access tokens are in `~/.config/moneylens/plaid-tokens.json` (override with `PLAID_TOKEN_FILE`), outside the repo so they can't be committed, served by Vite, or wiped by `git clean -x`. The browser stores only `data.plaid.items` (account mapping + sync cursor) and never sees a token or the secret.
+**Where things live.** The Plaid keys are in `.env.local` (gitignored; template in `.env.example`; loaded in `vite.config.js` with `loadEnv(…, ['PLAID_', 'MONEYLENS_', 'ANTHROPIC_'])` — never give them a `VITE_` prefix, or Vite ships them to the browser): one `PLAID_CLIENT_ID`, one secret per environment (`PLAID_SECRET_SANDBOX`, `PLAID_SECRET_PRODUCTION`), and `PLAID_ENV` choosing between them. `resolvePlaidConfig` turns these into the API's config or a setup problem to show (a missing variable, or the retired single `PLAID_SECRET`, which is never guessed at). Per-bank access tokens are in `~/.config/moneylens/plaid-tokens.json` (override with `PLAID_TOKEN_FILE`), outside the repo so they can't be committed, served by Vite, or wiped by `git clean -x`. The browser stores only `data.plaid.items` (account mapping + sync cursor) and never sees a token or the secret.
 
 **Local API** (`server/plaidApi.js`, mounted at `/api/plaid/*` by `plaidApiPlugin`): POST + JSON only; refuses `Host` headers other than localhost and `MONEYLENS_ALLOWED_HOSTS` (DNS rebinding) and foreign `Origin`s, because plugin middleware runs before Vite's own CORS/host checks (`checkRequest` in `server/http.js`, shared with the data API). Actions: `status`, `link-token` (with `itemId` = update mode), `exchange`, `accounts`, `sync`, `remove`. `PLAID_ENV` is `sandbox` or `production`; tokens are stored per environment.
 
@@ -136,6 +138,15 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
 - Balances become a `source: 'plaid'` snapshot for today on the Net Worth account linked to the target (created if missing), replacing an earlier Plaid snapshot that day; a manual or PDF snapshot for the same day wins.
 - "Change Accounts" deletes the item's synced transactions and the Net Worth accounts it created, then shows the setup again (no new Plaid connection needed).
 
+## HSA Receipts (`/hsa`)
+
+Medical expenses paid outside the HSA can be reimbursed from it tax-free any time later, as long as the receipt is kept. Helpers in `src/utils/hsa.js` (pure, tested); browser calls in `src/utils/receiptsClient.js`.
+
+- **Files** (photos and PDFs) are in the `receipt_files` table of the same database file as the data (`MONEYLENS_DB`), through `/api/receipts/*` (`server/receiptsApi.js`: `status`, `upload`, `file`, `read`, `delete`; same request checks as the other APIs). Uploads must be JPEG, PNG, WebP, GIF or PDF (checked by their first bytes) and at most 15 MB. Each receipt's details are in `data.hsa.receipts` with its `fileId`. Files aren't in the JSON document, so exports, versions and restores don't include them: deleting a receipt deletes its file, and a restored older version can list a receipt whose file is gone (View then says so).
+- **Reading** needs `ANTHROPIC_API_KEY` in `.env.local` (never with a `VITE_` prefix) or an `ant auth login` profile; without one, `status` says how to set it up and details are entered by hand. The server sends the file to Claude (`claude-opus-5-5`, effort low, structured output with `betaZodOutputFormat`, server-side fallbacks if the model declines) and the page shows the fields to check before saving; a refusal or unreadable reply asks for the details by hand. Only `read` sends anything to Anthropic.
+- **Paid with** (`suggestPayments`): spending of the same amount to the cent, from 7 days before the service date to 6 months after (bills come later), not linked to another receipt; Health first, then the closest date. Without a service date, the last 2 years, newest first.
+- **Totals** (`receiptTotals`): can reimburse = not reimbursed and not marked ineligible; "not sure" counts there and is also shown separately. **Payments without a receipt** (`missingReceipts`): Health spending from the last 2 years with no receipt linked.
+
 ## Storage
 
 `src/utils/storage.js` (browser) and `server/dataApi.js` (server). `main.jsx` awaits `openStorage()` before rendering the app, so everything that runs on open (Bank Sync's sync-on-open) sees the data; `StartupScreen` shows meanwhile, or with Try Again when the server can't be reached. `useFinanceData(store)` takes the store and is the only code that saves: never read or write `localStorage` directly.
@@ -144,7 +155,7 @@ Built-in profiles live in `src/constants/bankProfiles.js` (`BUILTIN_BANK_PROFILE
 - **No silent fallback.** Once the server has answered in a browser, `moneylens-server` is set in its localStorage, and from then on an unreachable server shows the start-up error instead of the browser's own (old or empty) data. When a browser starts using the server, its own copy moves to `moneylens-data-before-server` (Settings offers to download or delete it); it's never used again.
 - **Saves** (`createSaver`): the whole document, one save at a time, gzipped (`CompressionStream`), each on top of the version the last one made (`baseRev`). A newer change replaces one still waiting. A failed save is retried with backoff, with a "Not saved yet" banner and a warning on closing the page. If another window saved first, the server answers 409 `CONFLICT`: the window loads the latest version and drops its unsaved change (it can't be merged), with a notice. Windows load what others saved on focus, on coming back online, and every 60 s while visible (`load` with `since`, which answers `unchanged` when nothing is newer).
 - **Versions:** every save is a gzipped row in the `versions` table; the newest 100 and the last of each of the 60 latest (UTC) days are kept. Settings → Storage → Show Earlier Versions lists them (time, counts, note) and Restore saves an old one as a new version, so a restore can be undone too. Replacing everything (import, reset, restore, move) goes through `replaceData`, which waits for the save before the page reloads, and gives the version a note.
-- **Database file:** `~/.config/moneylens/moneylens.db` (`MONEYLENS_DB` overrides), created 0600 next to the Bank Sync tokens: outside the repo, so it can't be committed or served. `node:sqlite` needs Node 22.13+ and prints an ExperimentalWarning; it's imported only when the server starts, never by `vite build`.
+- **Database file:** `~/.config/moneylens/moneylens.db` (`MONEYLENS_DB` overrides; it also holds HSA receipt files), created 0600 next to the Bank Sync tokens: outside the repo, so it can't be committed or served. `node:sqlite` needs Node 22.13+ and prints an ExperimentalWarning; it's imported only when the server starts, never by `vite build`.
 - **From another device (Tailscale):** `tailscale serve --bg --https=8443 http://localhost:5173` (needs sudo, or `tailscale set --operator=$USER` once) gives the app an HTTPS address only the tailnet reaches, and `MONEYLENS_ALLOWED_HOSTS` in `.env.local` names it, for Vite's `allowedHosts` and both APIs' host check. The tailnet name is the user's, so it goes only in `.env.local`. There's no login: anything that can reach the address can read and change everything.
 - **As a service:** a systemd user unit can keep the server running (`loginctl enable-linger` makes it start at boot):
   ```ini
@@ -304,6 +315,9 @@ One JSON document, the same wherever it's stored (a version in the server's data
     "snapshots": [{ "id": "snap_…", "accountId": "acct_…", "date": "YYYY-MM-DD", "balance": 0, "source": "manual | pdf_import | plaid | csv_import" }],
     "projection": { "years": 20, "investReturn": 6.5, "cashReturn": 3, "homeGrowth": 3, "raise": 3, "inflation": 2.5, "withdrawalTax": 15, "takeHome": 0, "spending": 0, "cashCushion": 0, "extra": { "loan_…": 0 }, "holdFlat": ["acct_…"], "changes": [{ "id": "chg_…", "month": "YYYY-MM", "kind": "takeHome | payRaise | spending | oneTime | stopPaychecks | income | contribution | spendAccount | periodCost | payOff", "amount": -500, "label": "optional", "enabled": "optional, false = switched off", "accountId": "contribution, spendAccount, payOff; periodCost optional", "debtId": "payOff", "every": "contribution: 1 | 3 | 6 | 12", "times": "contribution, optional", "match": "contribution, optional %", "years": "spendAccount, periodCost", "growth": "periodCost, optional %" }] }
   },
+  "hsa": {
+    "receipts": [{ "id": "rcpt_…", "provider": "", "serviceDate": "YYYY-MM-DD | empty", "amount": 0, "patient": "", "category": "doctor | dental | vision | pharmacy | hospital | lab | therapy | equipment | other", "description": "", "eligible": "yes | unsure | no", "notes": "", "transactionId": "optional", "fileId": "optional", "fileName": "", "mime": "", "readBy": "optional, the model that read it", "reimbursedAt": "optional YYYY-MM-DD", "reimbursedAmount": 0, "createdAt": "" }]
+  },
   "plaid": {
     "items": [{
       "itemId": "…", "institutionName": "", "env": "sandbox | production",
@@ -316,7 +330,7 @@ One JSON document, the same wherever it's stored (a version in the server's data
 
 - `type` exists only on imported and synced transactions; `isSubscription` is set on import (and by re-categorize).
 - `importedFrom` is the profile ID of the file the row came from, `"manual"` for an unsaved manual mapping, or a Bank Sync account's `target`.
-- `merchantName` and `plaidCategory` are present only when Plaid supplied them; `pairedTransfer: true` only on matched Bank Sync transfers; `transferAccountId` only on transfers linked to a Net Worth account; an account's `paycheckKeywords` and `paycheckContribution` only on assets that follow paychecks; `netWorth.projection` only once a projection setting is changed, and each of its keys only when set (otherwise the default or the figure worked out from the data); a mortgage payment's `activity` only when its statement listed dated payments; a loan's `pastServicers` only after a servicing transfer; `categorySetByUser: true` only on categories the user chose (see Auto-Categorization). Optional fields whose absence is the right default for old data need no migration.
+- `merchantName` and `plaidCategory` are present only when Plaid supplied them; `pairedTransfer: true` only on matched Bank Sync transfers; `transferAccountId` only on transfers linked to a Net Worth account; an account's `paycheckKeywords` and `paycheckContribution` only on assets that follow paychecks; `netWorth.projection` only once a projection setting is changed, and each of its keys only when set (otherwise the default or the figure worked out from the data); a mortgage payment's `activity` only when its statement listed dated payments; a loan's `pastServicers` only after a servicing transfer; `hsa` only once a receipt is added (a receipt's `transactionId`, file fields, `readBy` and `reimbursed*` only when set); `categorySetByUser: true` only on categories the user chose (see Auto-Categorization). Optional fields whose absence is the right default for old data need no migration.
 
 ### Schema versions and migration
 
@@ -324,23 +338,24 @@ One JSON document, the same wherever it's stored (a version in the server's data
 
 ### ID generation
 
-Always use `makeId(prefix)` from `src/utils/ids.js` (`tx_`, `sub_`, `prop_`, `loan_`, `mpay_`, `acct_`, `snap_`, `chg_`). It returns `prefix_<Date.now()>` and appends `_N` when called more than once in the same millisecond. Batch operations use one `makeId` plus an index (`tx_1711234567890_0`, `_1`, …). Never build IDs from raw `Date.now()` in a loop — that produced duplicate IDs (and deleting one record deleted all of them). Call `makeId` outside `setState` updaters (see `applyPlaidSync`): React may run an updater twice.
+Always use `makeId(prefix)` from `src/utils/ids.js` (`tx_`, `sub_`, `prop_`, `loan_`, `mpay_`, `acct_`, `snap_`, `chg_`, `rcpt_`). It returns `prefix_<Date.now()>` and appends `_N` when called more than once in the same millisecond. Batch operations use one `makeId` plus an index (`tx_1711234567890_0`, `_1`, …). Never build IDs from raw `Date.now()` in a loop — that produced duplicate IDs (and deleting one record deleted all of them). Call `makeId` outside `setState` updaters (see `applyPlaidSync`): React may run an updater twice.
 
 ## Project Structure
 
 ```
 moneylens/
 ├── CLAUDE.md
-├── .env.example                   # Template for .env.local (Plaid keys; gitignored)
+├── .env.example                   # Template for .env.local (Plaid and Anthropic keys; gitignored)
 ├── eslint.config.js
 ├── index.html
 ├── package.json
-├── vite.config.js                 # Loads PLAID_* env, mounts the Bank Sync API; also Vitest config (TZ)
+├── vite.config.js                 # Loads PLAID_*, MONEYLENS_*, ANTHROPIC_* env, mounts the local APIs; also Vitest config (TZ)
 ├── public/favicon.svg
 ├── server/
 │   ├── http.js                    # Request checks (host, origin, JSON POST) and JSON/gzip helpers for both APIs
 │   ├── plaidApi.js                # Bank Sync API: Plaid calls, token store, Vite plugin
 │   ├── dataApi.js                 # Data API: the SQLite store (versions, conflicts), Vite plugin
+│   ├── receiptsApi.js             # HSA receipts API: files in the database, reading with Claude, Vite plugin
 │   └── *.test.js
 └── src/
     ├── main.jsx                   # Opens the storage, then ErrorBoundary + BrowserRouter + App
@@ -365,6 +380,8 @@ moneylens/
     │   ├── projection.js          # Net worth projection: cash flow baseline, loans, future changes, month-by-month projection, milestones
     │   ├── plaidSync.js           # Bank Sync: default targets, applySyncResult, removePlaidItem
     │   ├── plaidClient.js         # Browser calls to /api/plaid and the Plaid Link loader
+    │   ├── hsa.js                 # HSA receipts: totals, payment suggestions, payments without a receipt
+    │   ├── receiptsClient.js      # Browser calls to /api/receipts
     │   ├── mortgageCalculations.js
     │   ├── mortgagePdfParser.js   # Lakeview/Rocket/Valon mortgage + US Bank statement PDFs
     │   ├── migrate.js             # Default data, schema version, migrations
@@ -398,7 +415,7 @@ moneylens/
     │   └── ImportPreviewTable.jsx
     └── pages/
         ├── Dashboard.jsx  Subscriptions.jsx  Spending.jsx  Income.jsx  Trends.jsx
-        ├── Budgets.jsx    Mortgage.jsx       NetWorth.jsx  Import.jsx  BankSync.jsx  Settings.jsx
+        ├── Budgets.jsx    Mortgage.jsx       NetWorth.jsx  HsaReceipts.jsx  Import.jsx  BankSync.jsx  Settings.jsx
 ```
 
 ## Coding Conventions
@@ -435,6 +452,7 @@ Not built yet (build only when asked):
 - Dashboard budget markers are full-height reference lines, not per-bar
 - "Detected from Imports" monthly estimate averages charges without normalizing frequency or excluding cancelled subscriptions
 - The local server has no login (Tailscale is the only gate), and two windows editing at once don't merge: the later save is dropped
+- HSA receipts: no HSA opening date (expenses from before it aren't eligible; the list of payments without a receipt just looks back 2 years), no adding receipts by email, and the files aren't in exports
 - Bank Sync uses only Plaid's Transactions product: no Liabilities (mortgage details still come from statement PDFs) or Investments (brokerages may not appear in Link), no webhooks, no on-demand `/transactions/refresh`
 
 ## Future Enhancements (Don't Build Yet)

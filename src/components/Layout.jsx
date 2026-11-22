@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: '/budgets', label: 'Budgets' },
   { to: '/mortgage', label: 'Mortgage' },
   { to: '/net-worth', label: 'Net Worth' },
+  { to: '/hsa', label: 'HSA' },
   { to: '/import', label: 'Import' },
   { to: '/bank-sync', label: 'Bank Sync' },
   { to: '/settings', label: 'Settings' },

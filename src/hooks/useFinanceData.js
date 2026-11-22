@@ -296,6 +296,24 @@ export function useFinanceData(store) {
     update((d) => ({ ...d, netWorth: { ...d.netWorth, snapshots: d.netWorth.snapshots.filter((s) => s.id !== id) } }));
   }, [update]);
 
+  // HSA receipt vault (data.hsa.receipts; absent until the first receipt). The files live on the local server.
+  const addReceipt = useCallback((receipt) => {
+    const newReceipt = { ...receipt, id: makeId('rcpt'), createdAt: new Date().toISOString() };
+    update((d) => ({ ...d, hsa: { ...d.hsa, receipts: [...(d.hsa?.receipts || []), newReceipt] } }));
+    return newReceipt.id;
+  }, [update]);
+
+  const updateReceipt = useCallback((id, changes) => {
+    update((d) => ({
+      ...d,
+      hsa: { ...d.hsa, receipts: (d.hsa?.receipts || []).map((r) => (r.id === id ? { ...r, ...changes } : r)) },
+    }));
+  }, [update]);
+
+  const deleteReceipt = useCallback((id) => {
+    update((d) => ({ ...d, hsa: { ...d.hsa, receipts: (d.hsa?.receipts || []).filter((r) => r.id !== id) } }));
+  }, [update]);
+
   // Bank Sync (Plaid). Items hold each connection's account mapping and sync cursor;
   // the access tokens stay on the local server.
   const savePlaidItem = useCallback((item) => {
@@ -390,6 +408,9 @@ export function useFinanceData(store) {
     importSnapshots,
     deleteSnapshot,
     setProjectionSettings,
+    addReceipt,
+    updateReceipt,
+    deleteReceipt,
     savePlaidItem,
     applyPlaidSync,
     setPlaidItemError,

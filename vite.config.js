@@ -2,17 +2,18 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { plaidApiPlugin } from './server/plaidApi.js'
 import { dataApiPlugin } from './server/dataApi.js'
+import { receiptsApiPlugin } from './server/receiptsApi.js'
 import { parseHostList } from './server/http.js'
 
 export default defineConfig(({ mode }) => {
-  // PLAID_* and MONEYLENS_* come from .env.local (gitignored). Without the VITE_ prefix they stay on the server.
-  const env = loadEnv(mode, process.cwd(), ['PLAID_', 'MONEYLENS_'])
+  // PLAID_*, MONEYLENS_* and ANTHROPIC_* come from .env.local (gitignored). Without the VITE_ prefix they stay on the server.
+  const env = loadEnv(mode, process.cwd(), ['PLAID_', 'MONEYLENS_', 'ANTHROPIC_'])
   // Names besides localhost the app is reached by, e.g. through `tailscale serve` (see .env.example)
   const extraHosts = parseHostList(env.MONEYLENS_ALLOWED_HOSTS)
   const allowedHosts = extraHosts.length ? extraHosts : undefined
 
   return {
-    plugins: [react(), mode !== 'test' && plaidApiPlugin(env), mode !== 'test' && dataApiPlugin(env)],
+    plugins: [react(), ...(mode === 'test' ? [] : [plaidApiPlugin(env), dataApiPlugin(env), receiptsApiPlugin(env)])],
     server: { allowedHosts },
     preview: { allowedHosts },
     test: {
