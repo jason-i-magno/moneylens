@@ -412,6 +412,10 @@ iframe.receipt-viewer { height: 75vh; background: #fff; }
 .cal-pay .cal-amt, .item-amount.income { color: #7CE8A3; }
 .cal-group-date { margin-top: 14px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
 .cal-group:first-child .cal-group-date { margin-top: 4px; }
+.cal-toggle { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 0.85rem; color: var(--text-muted); cursor: pointer; }
+.cal-toggle input { width: auto; accent-color: var(--accent-coral); }
+.cal-buys { border-left-color: var(--border); color: var(--text-muted); }
+.cal-buys-dot { background: var(--text-muted); }
 .chip.muted { color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 13%, transparent); }
 
 /* === Native Controls === */

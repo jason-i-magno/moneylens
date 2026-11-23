@@ -306,3 +306,13 @@ export function paychecksForMonth(transactions, month, today) {
   }
   return entries.sort((a, b) => a.date.localeCompare(b.date));
 }
+
+// Everything else spent in `month` up to `today`, by date (largest first on a day): spending (transfers and money in
+// left out, as everywhere) that none of `shown` (the month's bills and payments, by transactionId) already is
+export function otherPurchases(transactions, month, today, shown = []) {
+  const taken = new Set(shown.map((e) => e.transactionId).filter(Boolean));
+  return transactions
+    .filter((tx) => tx.date?.startsWith(month) && tx.date <= today && isSpending(tx) && !taken.has(tx.id))
+    .map((tx) => ({ key: `buy:${tx.id}`, name: tx.merchantName || tx.name, date: tx.date, amount: tx.amount, category: tx.category, status: 'purchase', purchase: true, transactionId: tx.id }))
+    .sort((a, b) => a.date.localeCompare(b.date) || b.amount - a.amount);
+}

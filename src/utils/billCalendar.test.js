@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  bankHolidays, billsForMonth, calendarWeeks, detectPaySchedule, isBusinessDay, landingDate, monthTotals, offDayRule, paychecksForMonth, scheduledPaydays,
+  bankHolidays, billsForMonth, calendarWeeks, detectPaySchedule, isBusinessDay, landingDate, monthTotals, offDayRule, otherPurchases, paychecksForMonth,
+  scheduledPaydays,
 } from './billCalendar';
 
 let seq = 0;
@@ -242,5 +243,25 @@ describe('paychecks', () => {
   it('needs at least 3 recent paydays', () => {
     expect(detectPaySchedule([deposit('2026-11-04', 1900), deposit('2026-11-11', 1900)], '2026-11-22')).toBeNull();
     expect(paychecksForMonth([], '2026-11', '2026-11-22')).toEqual([]);
+  });
+});
+
+describe('other purchases', () => {
+  it("lists the month's other spending by date, leaving out bills already shown, transfers, money in and later days", () => {
+    const txs = [
+      debit('2026-11-03', 42.5, 'DEMO GROCER', 'groceries'),
+      debit('2026-11-03', 120, 'DEMO HARDWARE', 'shopping'),
+      { ...debit('2026-11-05', 15.49, 'STREAMCO', 'entertainment'), id: 'bill_tx' },
+      debit('2026-11-06', 900, 'CARD PAYMENT', 'transfers'),
+      { ...debit('2026-11-07', 25, 'DEMO STORE REFUND', 'refunds'), type: 'credit' },
+      debit('2026-11-25', 60, 'DEMO DINER', 'dining'), // after today
+      debit('2026-10-30', 10, 'DEMO CAFE', 'dining'), // last month
+    ];
+    const shown = [{ key: 'streamco', transactionId: 'bill_tx' }];
+    expect(otherPurchases(txs, '2026-11', '2026-11-22', shown).map((p) => [p.date, p.name, p.amount, p.category])).toEqual([
+      ['2026-11-03', 'DEMO HARDWARE', 120, 'shopping'],
+      ['2026-11-03', 'DEMO GROCER', 42.5, 'groceries'],
+    ]);
+    expect(otherPurchases(txs, '2026-12', '2026-11-22')).toEqual([]);
   });
 });
