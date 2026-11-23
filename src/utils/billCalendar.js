@@ -1,6 +1,6 @@
 // Bills calendar: the days recurring charges land on in a month: charged already, still to come, or late
 import { addDays, addMonths, daysBetween, daysInMonth } from './dates';
-import { detectBills, merchantKey, mortgageBills, mortgageDueDate, subscriptionsDue, withoutMortgagePayments } from './review';
+import { comesIn, detectBills, detectSparseBills, dueBills, dueDateIn, merchantKey, subscriptionsDue, withoutPaymentsTo } from './review';
 import { isIncome, isSpending, roundCents, sumAmounts } from './transactions';
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -81,30 +81,32 @@ export function landingDate(date, rule) {
 
 // A charge is a bill's when it's from the same merchant, between half and double the bill's amount (so a
 // mortgage's small extra-principal payments aren't taken for the payment itself), within this many days of the
-// day the bill lands
+// day the bill lands (more for a bill every few months, whose day drifts more)
 const CHARGE_WITHIN_DAYS = 7;
+const SPARSE_CHARGE_WITHIN_DAYS = 15;
 function chargeNear(bill, transactions, date, today) {
+  const within = bill.every > 1 ? SPARSE_CHARGE_WITHIN_DAYS : CHARGE_WITHIN_DAYS;
   return transactions
-    .filter((tx) => tx.date && tx.date <= today && Math.abs(daysBetween(date, tx.date)) <= CHARGE_WITHIN_DAYS && isSpending(tx)
+    .filter((tx) => tx.date && tx.date <= today && Math.abs(daysBetween(date, tx.date)) <= within && isSpending(tx)
       && tx.amount >= bill.amount / 2 && tx.amount <= bill.amount * 2 && merchantKey(tx.name) === bill.key)
     .sort((a, b) => Math.abs(daysBetween(date, a.date)) - Math.abs(daysBetween(date, b.date)))[0] || null;
 }
 
-// A mortgage payment counts toward the due date it's closest to, from this many days before it to this many after
+// A payment counts toward the due date it's closest to, from this many days before it to this many after
 const PAID_BEFORE_DAYS = 25;
 const PAID_AFTER_DAYS = 15;
 
-// A mortgage loan's entries in `month`: its due date (paid, with the day it was paid; or expected, or unpaid once
-// it has gone by), and each payment made in the month, on the day it left the account. Due dates from two months
-// before through the month after are matched in order, each to the closest payment of at least the scheduled
-// amount (95%, for escrow changes; extra-principal payments are smaller) that an earlier one didn't take.
-function mortgageEntries(loan, transactions, month, today) {
-  const payments = transactions.filter((tx) => tx.date && tx.date <= today && isSpending(tx) && tx.amount >= loan.amount * 0.95 && loan.isPayment(tx));
+// A bill with a due date (dueBills: a mortgage loan, or a bill the user set up) in `month`: its due date (paid,
+// with the day it was paid; or expected, or unpaid once it has gone by), and each payment made in the month, on the
+// day it left the account. Due dates from two months before through the month after are matched in order, each to
+// the closest payment of at least `minShare` of the amount that an earlier one didn't take.
+function dueEntries(bill, transactions, month, today) {
+  const payments = transactions.filter((tx) => tx.date && tx.date <= today && isSpending(tx) && tx.amount >= bill.amount * bill.minShare && bill.isPayment(tx));
   const taken = new Set();
   const entries = [];
-  const base = { name: 'Mortgage due', detail: loan.label, category: 'housing', varies: false, mortgage: true };
+  const base = { name: bill.dueName, detail: bill.label, category: bill.category, varies: bill.varies, ...(bill.mortgage && { mortgage: true }) };
   for (const m of [addMonths(month, -2), addMonths(month, -1), month, addMonths(month, 1)]) {
-    const due = mortgageDueDate(loan, m);
+    const due = dueDateIn(bill, m);
     if (!due) continue;
     const payment = payments
       .filter((tx) => !taken.has(tx.id) && daysBetween(tx.date, due) <= PAID_BEFORE_DAYS && daysBetween(due, tx.date) <= PAID_AFTER_DAYS)
@@ -113,14 +115,14 @@ function mortgageEntries(loan, transactions, month, today) {
     if (due.startsWith(month)) {
       entries.push({
         ...base,
-        key: `due:${loan.id}:${due}`,
+        key: `due:${bill.id}:${due}`,
         date: due,
-        amount: loan.amount,
+        amount: bill.amount,
         ...(payment ? { status: 'paid', paidOn: payment.date } : { status: due < today ? 'unpaid' : 'expected' }),
       });
     }
     if (payment?.date.startsWith(month)) {
-      entries.push({ ...base, key: `pay:${loan.id}:${due}`, name: 'Mortgage payment', date: payment.date, amount: payment.amount, status: 'charged', forDue: due, transactionId: payment.id });
+      entries.push({ ...base, key: `pay:${bill.id}:${due}`, name: bill.payName, date: payment.date, amount: payment.amount, varies: false, status: 'charged', forDue: due, transactionId: payment.id });
     }
   }
   return entries;
@@ -129,27 +131,30 @@ function mortgageEntries(loan, transactions, month, today) {
 const usualDate = (bill, month) => `${month}-${pad(Math.min(bill.day, daysInMonth(month)))}`;
 
 // The bills of `month` ('YYYY-MM') as of `today`, by date. Recurring bills are the ones charged on about the same
-// day in each of the 3 full months before today's month (detectBills). Each month's bill lands on its day, or, when
+// day in each of the 3 full months before today's month (detectBills), and those every two or three months in the 6
+// before it (detectSparseBills), in the months they come. Each month's bill lands on its day, or, when
 // that isn't a business day, where the bill has moved before (offDayRule, landingDate; `movedFrom`), which can be in
 // the month before or after. A bill whose charge has posted shows the charge (its real date and amount); one that
 // hasn't is expected, or late LATE_AFTER_DAYS after it lands; in a past month only charges show. A later month uses
-// this month's amount once it has posted (a fixed price that just changed). Mortgage loans show on their due date
-// and their payments on the day they were made (mortgageEntries), not as a guessed day: a manual payment lands
-// whenever the user makes it. Quarterly and yearly manual subscriptions are added on their due dates (`manual`).
+// this month's amount once it has posted (a fixed price that just changed). Mortgage loans and bills the user set
+// up show on their due date and their payments on the day they were made (dueEntries), not as a guessed day: a
+// payment by hand lands whenever the user makes it. Quarterly and yearly manual subscriptions are added on their
+// due dates (`manual`).
 // status: 'charged' | 'expected' | 'late' | 'due' (a manual subscription's day, nothing to match it against) |
 // 'paid' (a mortgage due date already paid: its money left with the payment, so it isn't counted again) | 'unpaid'
-// accounts: the Net Worth accounts, to tell a bank account's bills from a card's; mortgages: data.mortgages
-export function billsForMonth(transactions, subscriptions, month, today, accounts = [], mortgages = null) {
+// accounts: the Net Worth accounts, to tell a bank account's bills from a card's; mortgages: data.mortgages;
+// manual: data.bills
+export function billsForMonth(transactions, subscriptions, month, today, accounts = [], mortgages = null, manual = []) {
   const current = today.slice(0, 7);
   const bills = [];
-  const loans = mortgageBills(mortgages);
-  const others = withoutMortgagePayments(transactions, loans);
-  const series = detectBills(others, addMonths(current, -1));
+  const dues = dueBills(mortgages, manual);
+  const others = withoutPaymentsTo(transactions, dues);
+  const series = [...detectBills(others, addMonths(current, -1)), ...detectSparseBills(others, addMonths(current, -1))];
   for (const bill of series) {
     const { rule } = offDayRule(bill, others, current, accounts);
     const base = { key: bill.key, name: bill.name, category: bill.category, varies: bill.varies };
-    const thisMonth = bill.varies ? null : chargeNear(bill, others, landingDate(usualDate(bill, current), rule), today);
-    for (const m of [addMonths(month, -1), month, addMonths(month, 1)]) {
+    const thisMonth = bill.varies || !comesIn(bill, current) ? null : chargeNear(bill, others, landingDate(usualDate(bill, current), rule), today);
+    for (const m of [addMonths(month, -1), month, addMonths(month, 1)].filter((c) => comesIn(bill, c))) {
       const usual = usualDate(bill, m);
       const date = landingDate(usual, rule);
       const charged = chargeNear(bill, others, date, today);
@@ -168,7 +173,7 @@ export function billsForMonth(transactions, subscriptions, month, today, account
       }
     }
   }
-  for (const loan of loans) bills.push(...mortgageEntries(loan, transactions, month, today));
+  for (const due of dues) bills.push(...dueEntries(due, transactions, month, today));
   for (const sub of subscriptionsDue(subscriptions, month, series)) {
     bills.push({ ...sub, status: sub.date < today ? 'due' : 'expected' });
   }

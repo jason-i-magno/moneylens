@@ -71,6 +71,20 @@ export function useFinanceData(store) {
     update((d) => ({ ...d, subscriptions: d.subscriptions.filter((s) => s.id !== id) }));
   }, [update]);
 
+  // Bills the user set up for the calendar (data.bills; absent until the first): paid by hand, due on a day each month
+  const addBill = useCallback((bill) => {
+    const newBill = { ...bill, id: makeId('bill'), createdAt: new Date().toISOString() };
+    update((d) => ({ ...d, bills: [...(d.bills || []), newBill] }));
+  }, [update]);
+
+  const updateBill = useCallback((id, changes) => {
+    update((d) => ({ ...d, bills: (d.bills || []).map((b) => (b.id === id ? { ...b, ...changes } : b)) }));
+  }, [update]);
+
+  const deleteBill = useCallback((id) => {
+    update((d) => ({ ...d, bills: (d.bills || []).filter((b) => b.id !== id) }));
+  }, [update]);
+
   // Transactions
   const addTransaction = useCallback((tx) => {
     const newTx = {
@@ -389,6 +403,9 @@ export function useFinanceData(store) {
     addSubscription,
     updateSubscription,
     deleteSubscription,
+    addBill,
+    updateBill,
+    deleteBill,
     addTransaction,
     updateTransaction,
     updateTransactions,

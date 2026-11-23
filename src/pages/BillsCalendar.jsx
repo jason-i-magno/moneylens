@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import SummaryCard from '../components/SummaryCard';
-import { CATEGORY_MAP, formatCurrency } from '../constants/categories';
-import { addMonths, currentMonth, formatMonth, todayISO } from '../utils/dates';
+import ConfirmButton from '../components/ConfirmButton';
+import { CATEGORY_MAP, SPENDING_CATEGORIES, formatCurrency } from '../constants/categories';
+import { parseKeywordList } from '../utils/categorizer';
+import { addMonths, currentMonth, formatMonth, formatShortMonth, todayISO } from '../utils/dates';
 import { billsForMonth, calendarWeeks, counts, monthTotals, offDayReason, otherIncome, otherPurchases, paychecksForMonth } from '../utils/billCalendar';
 import { sumAmounts } from '../utils/transactions';
 
@@ -35,7 +37,59 @@ const shortDay = (date) => new Date(Number(date.slice(0, 4)), Number(date.slice(
 const dayLabel = (date) => new Date(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)))
   .toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 
-export default function BillsCalendar({ data }) {
+const ordinal = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
+
+// A bill the user sets up: one paid by hand that the calendar can't learn from charges
+function BillForm({ bill, onSave, onCancel }) {
+  const [form, setForm] = useState({
+    name: bill?.name || '',
+    amount: bill?.amount ?? '',
+    day: bill?.day ?? '',
+    category: bill?.category || 'utilities',
+    keywords: (bill?.keywords || []).join(', '),
+    varies: bill?.varies ?? false,
+    since: bill?.since || currentMonth(),
+  });
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }));
+  const day = Number(form.day);
+  const valid = form.name.trim() && Number(form.amount) > 0 && Number.isInteger(day) && day >= 1 && day <= 31;
+  const save = () => onSave({
+    name: form.name.trim(),
+    amount: Math.round(Number(form.amount) * 100) / 100,
+    day,
+    category: form.category,
+    keywords: parseKeywordList(form.keywords),
+    varies: form.varies || undefined,
+    since: form.since || undefined,
+  });
+  return (
+    <div className="bill-form">
+      <div className="form-grid">
+        <div className="form-group"><label>Name</label><input value={form.name} onChange={set('name')} placeholder="e.g. Water" /></div>
+        <div className="form-group"><label>Amount</label><input type="number" step="0.01" min="0" value={form.amount} onChange={set('amount')} /></div>
+        <div className="form-group"><label>Due on day of the month</label><input type="number" min="1" max="31" value={form.day} onChange={set('day')} placeholder="1 to 31" /></div>
+        <div className="form-group">
+          <label>Category</label>
+          <select value={form.category} onChange={set('category')}>
+            {SPENDING_CATEGORIES.filter((c) => c.id !== 'transfers').map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div className="form-group"><label>Starting</label><input type="month" value={form.since} onChange={set('since')} /></div>
+        <div className="form-group">
+          <label>Shows in your bank as (optional)</label>
+          <input value={form.keywords} onChange={set('keywords')} placeholder="words from the charge, comma-separated" />
+        </div>
+      </div>
+      <label className="cal-toggle bill-varies"><input type="checkbox" checked={form.varies} onChange={set('varies')} /> The amount varies</label>
+      <div className="data-actions">
+        <button className="btn-primary" disabled={!valid} onClick={save}>{bill ? 'Save Bill' : 'Add Bill'}</button>
+        <button className="btn-secondary" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+export default function BillsCalendar({ data, addBill, updateBill, deleteBill }) {
   const today = todayISO();
   const current = currentMonth();
   const first = addMonths(current, -MONTHS_BACK);
@@ -49,14 +103,17 @@ export default function BillsCalendar({ data }) {
   const showPurchases = params.get('purchases') === '1';
   const showIncome = params.get('income') === '1';
   const [selected, setSelected] = useState(null);
+  // The bill being added ('new') or edited (its id)
+  const [billForm, setBillForm] = useState(null);
 
   const transactions = data.transactions;
   const subscriptions = data.subscriptions;
   const accounts = data.netWorth?.accounts;
   const mortgages = data.mortgages;
+  const manual = data.bills;
   const bills = useMemo(
-    () => billsForMonth(transactions || [], subscriptions || [], month, today, accounts || [], mortgages),
-    [transactions, subscriptions, month, today, accounts, mortgages]
+    () => billsForMonth(transactions || [], subscriptions || [], month, today, accounts || [], mortgages, manual || []),
+    [transactions, subscriptions, month, today, accounts, mortgages, manual]
   );
   const paychecks = useMemo(() => paychecksForMonth(transactions || [], month, today), [transactions, month, today]);
   const purchases = useMemo(
@@ -246,7 +303,7 @@ export default function BillsCalendar({ data }) {
                   <div className="item-title"><span className="cal-dot" style={{ background: colorOf(b) }} />{b.name}</div>
                   <div className="item-meta">
                     {[
-                      b.income ? b.payer : b.mortgage ? b.detail : CATEGORY_MAP[b.category]?.name,
+                      b.income ? b.payer : b.detail || CATEGORY_MAP[b.category]?.name,
                       b.manual && 'from Subscriptions',
                       b.movedFrom && `moved from ${shortDay(b.movedFrom)} (${offDayReason(b.movedFrom)})`,
                       b.paidOn && `paid ${shortDay(b.paidOn)}`,
@@ -274,6 +331,41 @@ export default function BillsCalendar({ data }) {
           purchases are everything else you spent, and other income everything else that came in (interest, refunds, bonuses), transfers
           left out of both.
         </p>
+      </div>
+      <div className="card">
+        <h3>Bills You Set Up</h3>
+        <p className="muted settings-help">
+          For a bill the calendar can&apos;t learn from your charges, like one someone else used to pay, or one you pay by hand on no set day. It
+          shows on its due day each month, as paid once a payment matching how it shows in your bank (at least half the amount) comes in.
+        </p>
+        {(manual || []).map((b) => (billForm === b.id ? (
+          <BillForm key={b.id} bill={b} onSave={(changes) => { updateBill(b.id, changes); setBillForm(null); }} onCancel={() => setBillForm(null)} />
+        ) : (
+          <div key={b.id} className="item-row">
+            <div className="item-main">
+              <div className="item-title"><span className="cal-dot" style={{ background: colorOf(b) }} />{b.name}</div>
+              <div className="item-meta">
+                {[
+                  `due the ${ordinal(b.day)} every month`,
+                  b.since && `from ${formatShortMonth(b.since)}`,
+                  b.keywords?.length ? `matches ${b.keywords.map((k) => `\u201c${k}\u201d`).join(', ')}` : 'no bank text, so payments aren\u2019t matched',
+                ].filter(Boolean).join(' · ')}
+              </div>
+            </div>
+            <div className="item-side">
+              <span className="item-amount">{b.varies ? 'about ' : ''}{formatCurrency(b.amount)}</span>
+              <span className="bill-actions">
+                <button className="btn-icon" onClick={() => setBillForm(b.id)}>Edit</button>
+                <ConfirmButton label="Delete" confirmLabel="Delete bill?" className="btn-icon danger" onConfirm={() => deleteBill(b.id)} />
+              </span>
+            </div>
+          </div>
+        )))}
+        {billForm === 'new' ? (
+          <BillForm onSave={(bill) => { addBill(bill); setBillForm(null); }} onCancel={() => setBillForm(null)} />
+        ) : (
+          <button className="btn-secondary mt-12" onClick={() => setBillForm('new')}>Add a Bill</button>
+        )}
       </div>
     </div>
   );

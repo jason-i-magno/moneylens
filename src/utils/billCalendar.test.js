@@ -285,3 +285,44 @@ describe('other income', () => {
     ]);
   });
 });
+
+describe('a bill every two months', () => {
+  const water = [debit('2026-07-12', 240, 'DEMO WATER UTILITY', 'utilities'), debit('2026-09-03', 210, 'DEMO WATER UTILITY', 'utilities')];
+  const show = (bills) => bills.map((b) => [b.date, b.name, b.amount, b.status]);
+
+  it('comes every other month: not charged yet, then expected two months on', () => {
+    expect(show(billsForMonth(water, [], '2026-11', '2026-11-22'))).toEqual([['2026-11-03', 'DEMO WATER UTILITY', 225, 'late']]);
+    expect(billsForMonth(water, [], '2026-12', '2026-11-22')).toEqual([]);
+    expect(show(billsForMonth(water, [], '2027-01', '2026-11-22'))).toEqual([['2027-01-03', 'DEMO WATER UTILITY', 225, 'expected']]);
+    expect(show(billsForMonth(water, [], '2026-09', '2026-11-22'))).toEqual([['2026-09-03', 'DEMO WATER UTILITY', 210, 'charged']]);
+  });
+
+  it('counts a charge up to about two weeks from its day as paid', () => {
+    const paid = [...water, debit('2026-11-14', 220, 'DEMO WATER UTILITY', 'utilities')];
+    expect(show(billsForMonth(paid, [], '2026-11', '2026-11-22'))).toEqual([['2026-11-14', 'DEMO WATER UTILITY', 220, 'charged']]);
+  });
+});
+
+describe('a bill you set up', () => {
+  // Paid by hand from now on, due on the 20th; earlier months someone else paid (two catch-up payments here)
+  const bills = [{ id: 'b1', name: 'Water', amount: 130, day: 20, varies: true, category: 'utilities', keywords: ['demo water'], since: '2026-11' }];
+  const water = (date, amount) => debit(date, amount, 'DEMO WATER UTILITY', 'utilities');
+  const txs = [water('2026-07-12', 240), water('2026-09-03', 210), water('2026-09-05', 10)];
+  const show = (list) => list.map((b) => [b.date, b.name, b.amount, b.status, b.paidOn || b.forDue || null]);
+  const run = (t, month, today) => billsForMonth(t, [], month, today, [], null, bills);
+
+  it('is due on its day every month from when it starts, and replaces the guess from its charges', () => {
+    expect(show(run(txs, '2026-11', '2026-11-12'))).toEqual([['2026-11-20', 'Water', 130, 'expected', null]]);
+    expect(show(run(txs, '2026-11', '2026-11-22'))).toEqual([['2026-11-20', 'Water', 130, 'unpaid', null]]);
+    expect(show(run(txs, '2026-12', '2026-11-22'))).toEqual([['2026-12-20', 'Water', 130, 'expected', null]]);
+    expect(run(txs, '2026-09', '2026-11-22')).toEqual([]); // before it starts; the old payments aren't a guessed bill either
+  });
+
+  it('is paid by a payment of at least half its amount; a small fee from the same place is not', () => {
+    const paid = [...txs, water('2026-11-14', 12), water('2026-11-17', 126.4)];
+    expect(show(run(paid, '2026-11', '2026-11-22'))).toEqual([
+      ['2026-11-17', 'Water payment', 126.4, 'charged', '2026-11-20'],
+      ['2026-11-20', 'Water', 130, 'paid', '2026-11-17'],
+    ]);
+  });
+});

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildMonthlyReview, expectedBills, merchantKey, netWorthChange, newRecurring, planComparison, priceIncreases, reviewFacts, unusualCharges,
+  buildMonthlyReview, detectSparseBills, expectedBills, merchantKey, netWorthChange, newRecurring, planComparison, priceIncreases, reviewFacts,
+  unusualCharges,
 } from './review';
 
 let seq = 0;
@@ -125,6 +126,45 @@ describe('expected bills', () => {
   it('expects the new price after a fixed price changes', () => {
     const txs = [...monthly('STREAMCO', 15.49, 12, ['2026-08', '2026-09']), debit('2026-10-12', 17.99, 'STREAMCO')];
     expect(expectedBills(txs, [], '2026-10')).toEqual([expect.objectContaining({ name: 'STREAMCO', amount: 17.99, varies: false })]);
+  });
+});
+
+describe('bills every two or three months', () => {
+  it('finds a bill-like one from two charges, any one from three, and a quarterly one', () => {
+    const txs = [
+      debit('2026-07-12', 240, 'DEMO WATER UTILITY', 'utilities'),
+      debit('2026-09-03', 210, 'DEMO WATER UTILITY', 'utilities'),
+      debit('2026-07-10', 40, 'DEMO DINER', 'dining'), // two visits two months apart: not a bill
+      debit('2026-09-12', 42, 'DEMO DINER', 'dining'),
+      debit('2026-06-03', 30, 'DEMO GROOMER', 'other'), // three in a row, every other month
+      debit('2026-08-04', 30, 'DEMO GROOMER', 'other'),
+      debit('2026-10-02', 30, 'DEMO GROOMER', 'other'),
+      debit('2026-07-20', 150, 'DEMO INSURER', 'insurance'), // quarterly
+      debit('2026-10-20', 150, 'DEMO INSURER', 'insurance'),
+      debit('2026-05-09', 60, 'DEMO WAREHOUSE STORE', 'shopping'), // every other month, but on scattered days: shopping trips
+      debit('2026-07-22', 75, 'DEMO WAREHOUSE STORE', 'shopping'),
+      debit('2026-09-03', 50, 'DEMO WAREHOUSE STORE', 'shopping'),
+      debit('2026-06-01', 90, 'DEMO OLD UTILITY', 'utilities'), // skipped its turn in October
+      debit('2026-08-01', 90, 'DEMO OLD UTILITY', 'utilities'),
+      ...monthly('CITY POWER', 90, 20, ['2026-08', '2026-09', '2026-10']), // monthly, not sparse
+    ];
+    expect(detectSparseBills(txs, '2026-10').map((b) => [b.name, b.every, b.anchor, b.day, b.amount, b.varies]).sort()).toEqual([
+      ['DEMO GROOMER', 2, '2026-10', 2, 30, false],
+      ['DEMO INSURER', 3, '2026-10', 20, 150, false],
+      ['DEMO WATER UTILITY', 2, '2026-09', 3, 225, true],
+    ]);
+  });
+
+  it("gives way to a bill the user set up for the same charges, which shows on its due day", () => {
+    const txs = [debit('2026-07-12', 240, 'DEMO WATER UTILITY', 'utilities'), debit('2026-09-03', 210, 'DEMO WATER UTILITY', 'utilities')];
+    const bills = [{ id: 'b1', name: 'Water', amount: 130, day: 20, varies: true, category: 'utilities', keywords: ['demo water'], since: '2026-11' }];
+    expect(expectedBills(txs, [], '2026-10', null, bills).map((b) => [b.name, b.date, b.amount, b.varies])).toEqual([['Water', '2026-11-20', 130, true]]);
+  });
+
+  it('puts one due next month in the expected bills', () => {
+    const txs = [debit('2026-07-12', 240, 'DEMO WATER UTILITY', 'utilities'), debit('2026-09-03', 210, 'DEMO WATER UTILITY', 'utilities')];
+    expect(expectedBills(txs, [], '2026-10').map((b) => [b.name, b.date, b.amount])).toEqual([['DEMO WATER UTILITY', '2026-11-03', 225]]);
+    expect(expectedBills(txs, [], '2026-09')).toEqual([]); // due in November, not October
   });
 });
 

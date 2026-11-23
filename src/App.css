@@ -421,6 +421,9 @@ iframe.receipt-viewer { height: 75vh; background: #fff; }
 .cal-gains { border-left-color: color-mix(in srgb, #7CE8A3 45%, transparent); color: var(--text-muted); }
 .cal-gains .cal-amt { color: #7CE8A3; }
 .cal-gains-dot { background: color-mix(in srgb, #7CE8A3 55%, transparent); }
+.bill-form { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 14px; }
+.bill-varies { margin-bottom: 14px; }
+.bill-actions { display: flex; gap: 2px; }
 .chip.muted { color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 13%, transparent); }
 
 /* === Native Controls === */

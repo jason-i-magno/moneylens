@@ -41,7 +41,10 @@ export default function App({ store }) {
       >
         <Route path="/dashboard" element={<Dashboard data={data} />} />
         <Route path="/review" element={<Review data={data} />} />
-        <Route path="/calendar" element={<BillsCalendar data={data} />} />
+        <Route
+          path="/calendar"
+          element={<BillsCalendar data={data} addBill={finance.addBill} updateBill={finance.updateBill} deleteBill={finance.deleteBill} />}
+        />
         <Route
           path="/subscriptions"
           element={
