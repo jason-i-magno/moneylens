@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import SummaryCard from '../components/SummaryCard';
 import MonthSelect from '../components/MonthSelect';
 import { CATEGORY_MAP, formatCurrency } from '../constants/categories';
@@ -274,7 +274,8 @@ export default function Review({ data }) {
         ) : (
           <>
             <p className="muted settings-help">
-              {formatCurrency(upcomingTotal)} in charges that came on about the same day for the last three months, and yearly or quarterly subscriptions due.
+              {formatCurrency(upcomingTotal)} in charges that came on about the same day for the last three months, and yearly or quarterly subscriptions due.{' '}
+              <Link to={`/calendar?month=${addMonths(month, 1)}`}>See them on the calendar</Link>.
             </p>
             {review.upcoming.map((b) => (
               <div key={b.key} className="item-row">

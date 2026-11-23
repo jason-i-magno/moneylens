@@ -113,6 +113,15 @@ describe('expected bills', () => {
     ]);
   });
 
+  it('puts a mortgage on its due date instead of guessing a day from the payments', () => {
+    const mortgages = { loans: [{ id: 'l1', status: 'active', startDate: '2025-12-01', monthlyPI: 2000, paymentKeywords: ['demo servicer'] }], payments: [] };
+    const txs = [...monthly('DEMO SERVICER', 2000, 26, ['2026-08', '2026-09', '2026-10'], 'housing'), ...monthly('CITY POWER', 90, 20, ['2026-08', '2026-09', '2026-10'])];
+    expect(expectedBills(txs, [], '2026-10', mortgages).map(({ name, date, amount }) => [name, date, amount])).toEqual([
+      ['Mortgage due', '2026-11-01', 2000],
+      ['CITY POWER', '2026-11-20', 90],
+    ]);
+  });
+
   it('expects the new price after a fixed price changes', () => {
     const txs = [...monthly('STREAMCO', 15.49, 12, ['2026-08', '2026-09']), debit('2026-10-12', 17.99, 'STREAMCO')];
     expect(expectedBills(txs, [], '2026-10')).toEqual([expect.objectContaining({ name: 'STREAMCO', amount: 17.99, varies: false })]);

@@ -386,6 +386,34 @@ iframe.receipt-viewer { height: 75vh; background: #fff; }
 .page a.btn-icon { text-decoration: none; color: var(--text-muted); }
 .page a.btn-icon:hover { color: var(--text); }
 
+/* === Bills Calendar === */
+.month-step { padding: 0 14px; height: 38px; font-size: 1.1rem; line-height: 1; }
+.cal-head, .cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.cal-head { margin-bottom: 6px; color: var(--text-muted); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; text-align: center; }
+.cal-week { margin-bottom: 6px; }
+.cal-day { min-height: 96px; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--bg); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text); text-align: left; cursor: default; transition: border-color 0.2s, background 0.2s; }
+.cal-day.empty { background: transparent; }
+.cal-day.has-bills { cursor: pointer; }
+.cal-day.has-bills:hover { border-color: var(--border); }
+.cal-day.today { border-color: var(--accent-coral); }
+.cal-day.selected { background: var(--card-hover); border-color: var(--accent-purple); }
+.cal-num { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
+.cal-day.today .cal-num { color: var(--accent-coral); }
+.cal-bills { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cal-bill { display: flex; justify-content: space-between; gap: 4px; min-width: 0; padding-left: 5px; border-left: 3px solid; font-size: 0.72rem; }
+.cal-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-amt { font-weight: 600; white-space: nowrap; }
+.cal-bill.charged, .cal-bill.due, .cal-bill.paid, .cal-bill.received { opacity: 0.55; }
+.cal-bill.late .cal-amt, .cal-bill.unpaid .cal-amt { color: #f59e0b; }
+.cal-more { font-size: 0.7rem; color: var(--text-muted); }
+.cal-dots, .cal-total, .cal-income { display: none; }
+.cal-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.cal-dot.charged, .cal-dot.due, .cal-dot.paid, .cal-dot.received { opacity: 0.45; }
+.cal-pay .cal-amt, .item-amount.income { color: #7CE8A3; }
+.cal-group-date { margin-top: 14px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.cal-group:first-child .cal-group-date { margin-top: 4px; }
+.chip.muted { color: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 13%, transparent); }
+
 /* === Native Controls === */
 /* Every select gets the month picker's chevron and a dark open list, and number fields lose their spin arrows.
    This comes after the page styles so it layers on top of their padding and background color. */
@@ -407,5 +435,12 @@ input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; marg
   .receipt-review, .receipt-form-grid { grid-template-columns: minmax(0, 1fr); }
   .receipt-row { grid-template-columns: minmax(0, 1fr) auto; }
   .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .cal-head, .cal-week { gap: 3px; }
+  .cal-day { min-height: 58px; padding: 4px; gap: 3px; }
+  .cal-bills { display: none; }
+  .cal-dots { display: flex; flex-wrap: wrap; gap: 3px; }
+  .cal-dots .cal-dot { width: 6px; height: 6px; }
+  .cal-total, .cal-income { display: block; font-size: 0.62rem; font-weight: 600; }
+  .cal-income { color: #7CE8A3; }
   .receipt-actions { grid-column: 1 / -1; justify-content: flex-start; margin-left: -8px; }
 }

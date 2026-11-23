@@ -6,6 +6,7 @@ import { addMonths, daysInMonth, formatMonth } from './dates';
 import { baselineLoans, cashFlowBaseline } from './projection';
 import { buildBalanceTimeline, buildNetWorthHistory } from './netWorth';
 import { CATEGORY_MAP, SPENDING_CATEGORIES } from '../constants/categories';
+import { keywordRegex } from './categorizer';
 
 // A charge from a merchant not seen in the 12 months before, at least this much, is worth a look
 export const NEW_MERCHANT_MIN = 100;
@@ -159,13 +160,11 @@ function dueIn(sub, month) {
   return m === month ? `${month}-${pad(Math.min(day, daysInMonth(month)))}` : null;
 }
 
-// Bills expected in the month after `month`, by date: merchants charged in each of `month` and the two months
-// before whose largest charge each month came on about the same day (a mortgage payment, not the extra
-// principal; random visits don't line up), expected on that day again: at the latest amount when the two before
-// it were the same (a fixed price, perhaps just changed), else about the average (`varies`); plus quarterly and yearly manual subscriptions due then that no
-// charge already covers (monthly ones are found in the charges, or come out of a paycheck).
-export function expectedBills(transactions, subscriptions, month) {
-  const next = addMonths(month, 1);
+// Recurring bills in the 3 months ending with `month`: merchants charged in each of them whose largest charge
+// each month came on about the same day (a mortgage payment, not the extra principal; random visits don't line
+// up). Each with its day of the month (the latest) and its amount: the latest when the two before it were the
+// same (a fixed price, perhaps just changed), else about the average (`varies`).
+export function detectBills(transactions, month) {
   const months = [addMonths(month, -2), addMonths(month, -1), month];
   const bills = [];
   for (const [key, all] of chargesByMerchant(transactions, `${months[0]}-01`, lastDay(month))) {
@@ -175,24 +174,72 @@ export function expectedBills(transactions, subscriptions, month) {
     if (Math.max(...days) - Math.min(...days) > BILL_DAY_SPREAD) continue;
     const last = list[2];
     const fixed = cents(list[0].amount) === cents(list[1].amount);
-    const day = Math.min(days[2], daysInMonth(next));
     bills.push({
       key,
       name: displayName(last),
-      date: `${next}-${pad(day)}`,
+      day: days[2],
       amount: fixed ? last.amount : roundCents(sumAmounts(list) / 3),
       varies: !fixed,
       category: last.category,
+      source: last.importedFrom, // the account it's paid from
     });
   }
-  for (const sub of subscriptions) {
-    if (!STEP_MONTHS[sub.frequency] || sub.frequency === 'monthly') continue;
-    const date = dueIn(sub, next);
+  return bills;
+}
+
+// Quarterly and yearly manual subscriptions due in `month` that none of `bills` already covers (monthly ones show
+// up in the charges, or come out of a paycheck)
+export function subscriptionsDue(subscriptions, month, bills) {
+  return subscriptions.flatMap((sub) => {
+    if (!STEP_MONTHS[sub.frequency] || sub.frequency === 'monthly') return [];
+    const date = dueIn(sub, month);
     const word = merchantKey(sub.name).split(' ')[0];
-    if (!date || (word && bills.some((b) => b.key.includes(word)))) continue;
-    bills.push({ key: `sub:${sub.id}`, name: sub.name, date, amount: sub.amount, varies: false, category: sub.category, manual: true });
-  }
-  return bills.sort((a, b) => a.date.localeCompare(b.date) || b.amount - a.amount);
+    if (!date || (word && bills.some((b) => b.key.includes(word)))) return [];
+    return [{ key: `sub:${sub.id}`, name: sub.name, date, amount: sub.amount, varies: false, category: sub.category, manual: true }];
+  });
+}
+
+// Active mortgage loans as bills: each due on its start date's day of the month (payment 1 is due the month after
+// it starts) for its scheduled payment (P&I plus the latest escrow, baselineLoans), with `isPayment` recognizing
+// the user's payments to it by its payment keywords. Loans without a scheduled payment are left out.
+const textOf = (tx) => `${tx.name} ${tx.merchantName || ''}`;
+export function mortgageBills(mortgages) {
+  if (!mortgages?.loans?.length) return [];
+  return baselineLoans({ payments: [], ...mortgages })
+    .filter((l) => l.status === 'active' && l.scheduled > 0 && /^\d{4}-\d{2}-\d{2}$/.test(l.startDate || ''))
+    .map((l) => {
+      const patterns = (l.paymentKeywords || []).filter((k) => k.trim()).map(keywordRegex);
+      return {
+        id: l.id,
+        label: l.label || 'Mortgage',
+        day: Number(l.startDate.slice(8, 10)),
+        firstDue: addMonths(l.startDate.slice(0, 7), 1),
+        amount: roundCents(l.scheduled),
+        isPayment: (tx) => patterns.some((re) => re.test(textOf(tx))),
+      };
+    });
+}
+
+// A loan's due date in `month`, or null before its first payment
+export const mortgageDueDate = (loan, month) => (month < loan.firstDue ? null : `${month}-${pad(Math.min(loan.day, daysInMonth(month)))}`);
+
+// Transactions without the payments to mortgage loans: those are bills with a due date (mortgageBills), not
+// charges to guess a day from, since a manual payment lands whenever the user makes it
+export const withoutMortgagePayments = (transactions, loans) => (loans.length ? transactions.filter((tx) => !loans.some((l) => l.isPayment(tx))) : transactions);
+
+// Bills expected in the month after `month`, by date: the recurring bills of the 3 months ending with `month`
+// (detectBills, leaving out mortgage payments) on their day again, mortgage loans on their due date, and manual
+// subscriptions due then (subscriptionsDue)
+export function expectedBills(transactions, subscriptions, month, mortgages) {
+  const next = addMonths(month, 1);
+  const loans = mortgageBills(mortgages);
+  const bills = detectBills(withoutMortgagePayments(transactions, loans), month)
+    .map(({ day, ...b }) => ({ ...b, date: `${next}-${pad(Math.min(day, daysInMonth(next)))}` }));
+  const dues = loans.flatMap((l) => {
+    const date = mortgageDueDate(l, next);
+    return date ? [{ key: `due:${l.id}`, name: 'Mortgage due', date, amount: l.amount, varies: false, category: 'housing', mortgage: true }] : [];
+  });
+  return [...bills, ...dues, ...subscriptionsDue(subscriptions, next, bills)].sort((a, b) => a.date.localeCompare(b.date) || b.amount - a.amount);
 }
 
 // Net worth at the end of the month before `month` and at the end of `month` (as far as it's known), from the
@@ -263,7 +310,7 @@ export function buildMonthlyReview(data, month, today) {
     unusual: unusualCharges(transactions, month),
     increases: priceIncreases(transactions, month),
     newRecurring: newRecurring(transactions, month),
-    upcoming: expectedBills(transactions, data.subscriptions || [], month),
+    upcoming: expectedBills(transactions, data.subscriptions || [], month, data.mortgages),
     netWorth: netWorthChange(data, month),
     plan: planComparison(data, month, today),
   };
