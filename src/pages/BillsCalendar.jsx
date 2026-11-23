@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import SummaryCard from '../components/SummaryCard';
 import { CATEGORY_MAP, formatCurrency } from '../constants/categories';
 import { addMonths, currentMonth, formatMonth, todayISO } from '../utils/dates';
-import { billsForMonth, calendarWeeks, counts, monthTotals, offDayReason, otherPurchases, paychecksForMonth } from '../utils/billCalendar';
+import { billsForMonth, calendarWeeks, counts, monthTotals, offDayReason, otherIncome, otherPurchases, paychecksForMonth } from '../utils/billCalendar';
 import { sumAmounts } from '../utils/transactions';
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -44,8 +44,10 @@ export default function BillsCalendar({ data }) {
   const asked = params.get('month');
   const month = asked && MONTH.test(asked) && asked >= first && asked <= last ? asked : current;
   const months = useMemo(() => Array.from({ length: MONTHS_BACK + MONTHS_AHEAD + 1 }, (_, i) => addMonths(first, i)), [first]);
-  // Other purchases on or off, kept in the address (?purchases=1) so it stays on from month to month
+  // Other purchases and other income on or off, kept in the address (?purchases=1, ?income=1) so they stay on from
+  // month to month
   const showPurchases = params.get('purchases') === '1';
+  const showIncome = params.get('income') === '1';
   const [selected, setSelected] = useState(null);
 
   const transactions = data.transactions;
@@ -61,11 +63,15 @@ export default function BillsCalendar({ data }) {
     () => (showPurchases ? otherPurchases(transactions || [], month, today, bills) : []),
     [showPurchases, transactions, month, today, bills]
   );
-  // On each day: paychecks, then bills, then other purchases
-  const order = (e) => (e.income ? 0 : e.purchase ? 2 : 1);
+  const gains = useMemo(
+    () => (showIncome ? otherIncome(transactions || [], month, today, paychecks) : []),
+    [showIncome, transactions, month, today, paychecks]
+  );
+  // On each day: paychecks, other income, bills, then other purchases
+  const order = (e) => (e.income ? 0 : e.otherIncome ? 1 : e.purchase ? 3 : 2);
   const entries = useMemo(
-    () => [...paychecks, ...bills, ...purchases].sort((a, b) => a.date.localeCompare(b.date) || order(a) - order(b)),
-    [paychecks, bills, purchases]
+    () => [...paychecks, ...gains, ...bills, ...purchases].sort((a, b) => a.date.localeCompare(b.date) || order(a) - order(b)),
+    [paychecks, gains, bills, purchases]
   );
   const byDay = useMemo(() => {
     const map = new Map();
@@ -79,10 +85,14 @@ export default function BillsCalendar({ data }) {
   const dates = day ? [day] : [...byDay.keys()];
 
   const purchaseTotal = sumAmounts(purchases);
-  const setView = (m, all) => setParams({ ...(m !== current && { month: m }), ...(all && { purchases: '1' }) });
+  const gainTotal = sumAmounts(gains);
+  const setView = (changes) => {
+    const v = { month, purchases: showPurchases, income: showIncome, ...changes };
+    setParams({ ...(v.month !== current && { month: v.month }), ...(v.purchases && { purchases: '1' }), ...(v.income && { income: '1' }) });
+  };
   const go = (m) => {
     setSelected(null);
-    setView(m, showPurchases);
+    setView({ month: m });
   };
 
   return (
@@ -90,7 +100,7 @@ export default function BillsCalendar({ data }) {
       <div className="page-header">
         <div>
           <h2>Bills Calendar</h2>
-          <p className="page-subtitle">The days recurring charges and paychecks land on{showPurchases ? ', with everything else you bought' : ''}</p>
+          <p className="page-subtitle">The days recurring charges and paychecks land on</p>
         </div>
         <div className="page-header-actions">
           <button className="btn-secondary month-step" aria-label="Previous month" disabled={month <= first} onClick={() => go(addMonths(month, -1))}>‹</button>
@@ -101,7 +111,7 @@ export default function BillsCalendar({ data }) {
         </div>
       </div>
 
-      <div className="summary-grid">
+      <div className="summary-grid cal-summary">
         <SummaryCard
           label="Bills This Month"
           value={whole(totals.total)}
@@ -131,27 +141,44 @@ export default function BillsCalendar({ data }) {
               + `${whole(Math.abs(payTotal - totals.total))} ${payTotal >= totals.total ? 'more' : 'less'} than bills`}
           />
         )}
+        {showIncome && (
+          <SummaryCard
+            label="Other Income"
+            value={whole(gainTotal)}
+            tone={gainTotal > 0 ? 'good' : undefined}
+            note={month > current ? 'none yet' : `${plural(gains.length, 'deposit')}${month === current ? ' so far' : ''}`}
+          />
+        )}
       </div>
 
       <div className="card">
-        <label className="cal-toggle">
-          <input type="checkbox" checked={showPurchases} onChange={(e) => setView(month, e.target.checked)} />
-          Show other purchases
-        </label>
+        <div className="cal-toggles">
+          <label className="cal-toggle">
+            <input type="checkbox" checked={showPurchases} onChange={(e) => setView({ purchases: e.target.checked })} />
+            Show other purchases
+          </label>
+          <label className="cal-toggle">
+            <input type="checkbox" checked={showIncome} onChange={(e) => setView({ income: e.target.checked })} />
+            Show other income
+          </label>
+        </div>
         <div className="cal-head" aria-hidden="true">{WEEKDAYS.map((w) => <span key={w}>{w}</span>)}</div>
         {calendarWeeks(month).map((week) => (
           <div key={week.find(Boolean)} className="cal-week">
             {week.map((date, i) => {
               if (!date) return <span key={`blank-${i}`} className="cal-day empty" />;
               const dayEntries = byDay.get(date) || [];
-              const dayMain = dayEntries.filter((e) => !e.purchase);
+              const dayMain = dayEntries.filter((e) => !e.purchase && !e.otherIncome);
               const dayBuys = dayEntries.filter((e) => e.purchase);
+              const dayGains = dayEntries.filter((e) => e.otherIncome);
+              const cameIn = sumAmounts(dayMain.filter((e) => e.income)) + sumAmounts(dayGains);
               const dayBills = dayMain.filter((e) => !e.income && counts(e));
               const dayPay = dayMain.filter((e) => e.income);
               const spent = sumAmounts(dayBills) + sumAmounts(dayBuys);
               const label = [
                 dayPay.length && `paycheck ${whole(sumAmounts(dayPay))}`,
                 dayBills.length && `${plural(dayBills.length, 'bill')}, ${whole(sumAmounts(dayBills))}`,
+                dayGains.length && `other income ${whole(sumAmounts(dayGains))}`,
                 dayBuys.length && `${plural(dayBuys.length, 'other purchase')}, ${whole(sumAmounts(dayBuys))}`,
               ].filter(Boolean).join('; ');
               const classes = ['cal-day', date === today && 'today', day === date && 'selected', dayEntries.length > 0 && 'has-bills'].filter(Boolean).join(' ');
@@ -172,6 +199,12 @@ export default function BillsCalendar({ data }) {
                       </span>
                     ))}
                     {dayMain.length > 3 && <span className="cal-more">+{dayMain.length - 3} more</span>}
+                    {dayGains.length > 0 && (
+                      <span className="cal-bill cal-gains">
+                        <span className="cal-name">{dayGains.length === 1 ? dayGains[0].name : plural(dayGains.length, 'deposit')}</span>
+                        <span className="cal-amt">+{whole(sumAmounts(dayGains))}</span>
+                      </span>
+                    )}
                     {dayBuys.length > 0 && (
                       <span className="cal-bill cal-buys">
                         <span className="cal-name">{plural(dayBuys.length, 'purchase')}</span>
@@ -183,9 +216,10 @@ export default function BillsCalendar({ data }) {
                     <>
                       <span className="cal-dots">
                         {dayMain.map((e) => <span key={e.key} className={`cal-dot ${e.status}`} style={{ background: colorOf(e) }} />)}
+                        {dayGains.length > 0 && <span className="cal-dot cal-gains-dot" />}
                         {dayBuys.length > 0 && <span className="cal-dot cal-buys-dot" />}
                       </span>
-                      {dayPay.length > 0 && <span className="cal-income">+{whole(sumAmounts(dayPay))}</span>}
+                      {cameIn > 0 && <span className="cal-income">+{whole(cameIn)}</span>}
                       {spent > 0 && <span className="cal-total">{whole(spent)}</span>}
                     </>
                   )}
@@ -198,7 +232,7 @@ export default function BillsCalendar({ data }) {
 
       <div className="card">
         <div className="amort-header">
-          <h3>{day ? dayLabel(day) : `${showPurchases ? 'Everything' : paychecks.length ? 'Bills and Paychecks' : 'Bills'} in ${formatMonth(month)}`}</h3>
+          <h3>{day ? dayLabel(day) : `${showPurchases || showIncome ? 'Everything' : paychecks.length ? 'Bills and Paychecks' : 'Bills'} in ${formatMonth(month)}`}</h3>
           {day && <button className="btn-icon" onClick={() => setSelected(null)}>Show All</button>}
         </div>
         {entries.length === 0 ? (
@@ -221,8 +255,10 @@ export default function BillsCalendar({ data }) {
                   </div>
                 </div>
                 <div className="item-side">
-                  <span className={`item-amount ${b.income ? 'income' : ''}`}>{b.income ? `${b.varies ? 'about ' : ''}+${formatCurrency(b.amount)}` : amountText(b)}</span>
-                  {!b.purchase && <span className={`chip ${statusOf(b).tone}`}>{statusOf(b).label}</span>}
+                  <span className={`item-amount ${b.income || b.otherIncome ? 'income' : ''}`}>
+                    {b.income || b.otherIncome ? `${b.varies ? 'about ' : ''}+${formatCurrency(b.amount)}` : amountText(b)}
+                  </span>
+                  {!b.purchase && !b.otherIncome && <span className={`chip ${statusOf(b).tone}`}>{statusOf(b).label}</span>}
                 </div>
               </div>
             ))}
@@ -235,7 +271,8 @@ export default function BillsCalendar({ data }) {
           mortgage shows on its due date, and each payment on the day you made it (matched by the loan&apos;s payment keywords); a due date
           you paid ahead isn&apos;t counted again. Paychecks come from your employer&apos;s deposits (Salary from whoever deposited most often
           lately) on the schedule they follow, a day early when payday is a weekend or bank holiday; they aren&apos;t in the bill totals. Other
-          purchases are everything else you spent (transfers, like card payments, left out).
+          purchases are everything else you spent, and other income everything else that came in (interest, refunds, bonuses), transfers
+          left out of both.
         </p>
       </div>
     </div>

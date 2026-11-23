@@ -290,7 +290,7 @@ export function paychecksForMonth(transactions, month, today) {
   const base = { name: 'Paycheck', payer: schedule.name, category: 'salary', income: true };
   const entries = all
     .filter((p) => p.date.startsWith(month) && p.date <= today)
-    .map((p) => ({ ...base, key: `pay:${p.date}`, date: p.date, amount: p.amount, varies: false, status: 'received' }));
+    .map((p) => ({ ...base, key: `pay:${p.date}`, date: p.date, amount: p.amount, varies: false, status: 'received', transactionIds: p.txs.map((tx) => tx.id) }));
   if (month < today.slice(0, 7)) return entries;
   for (const { date, usual } of scheduledPaydays(schedule, month)) {
     if (all.some((p) => Math.abs(daysBetween(date, p.date)) <= PAY_WITHIN_DAYS)) continue;
@@ -314,5 +314,15 @@ export function otherPurchases(transactions, month, today, shown = []) {
   return transactions
     .filter((tx) => tx.date?.startsWith(month) && tx.date <= today && isSpending(tx) && !taken.has(tx.id))
     .map((tx) => ({ key: `buy:${tx.id}`, name: tx.merchantName || tx.name, date: tx.date, amount: tx.amount, category: tx.category, status: 'purchase', purchase: true, transactionId: tx.id }))
+    .sort((a, b) => a.date.localeCompare(b.date) || b.amount - a.amount);
+}
+
+// Everything else that came in during `month` up to `today`, by date (largest first on a day): income (money in that
+// isn't a transfer: interest, refunds, bonuses, gifts) that isn't one of `paychecks`' deposits
+export function otherIncome(transactions, month, today, paychecks = []) {
+  const taken = new Set(paychecks.flatMap((p) => p.transactionIds || []));
+  return transactions
+    .filter((tx) => tx.date?.startsWith(month) && tx.date <= today && isIncome(tx) && !taken.has(tx.id))
+    .map((tx) => ({ key: `in:${tx.id}`, name: tx.merchantName || tx.name, date: tx.date, amount: tx.amount, category: tx.category, status: 'income', otherIncome: true, transactionId: tx.id }))
     .sort((a, b) => a.date.localeCompare(b.date) || b.amount - a.amount);
 }

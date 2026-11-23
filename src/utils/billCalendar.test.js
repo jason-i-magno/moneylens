@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  bankHolidays, billsForMonth, calendarWeeks, detectPaySchedule, isBusinessDay, landingDate, monthTotals, offDayRule, otherPurchases, paychecksForMonth,
-  scheduledPaydays,
+  bankHolidays, billsForMonth, calendarWeeks, detectPaySchedule, isBusinessDay, landingDate, monthTotals, offDayRule, otherIncome, otherPurchases,
+  paychecksForMonth, scheduledPaydays,
 } from './billCalendar';
 
 let seq = 0;
@@ -263,5 +263,25 @@ describe('other purchases', () => {
       ['2026-11-03', 'DEMO GROCER', 42.5, 'groceries'],
     ]);
     expect(otherPurchases(txs, '2026-12', '2026-11-22')).toEqual([]);
+  });
+});
+
+describe('other income', () => {
+  it("lists the month's other money in by date, leaving out paychecks, transfers, spending and later days", () => {
+    const deposit = (date, amount, name, category = 'salary') => ({ id: `i${++seq}`, date, amount, name, category, type: 'credit' });
+    const txs = [
+      ...['2026-10-14', '2026-10-21', '2026-10-28', '2026-11-04', '2026-11-18'].map((d) => deposit(d, 1900, 'DEMO EMPLOYER PAYROLL')),
+      deposit('2026-11-10', 1000, 'DEMO BANK BONUS'), // salary-categorized, but not from the employer
+      deposit('2026-11-12', 25, 'DEMO STORE', 'refunds'),
+      deposit('2026-11-30', 3.1, 'INTEREST EARNED', 'interest'), // after today
+      deposit('2026-11-06', 900, 'CARD PAYMENT RECEIVED', 'transfers'),
+      debit('2026-11-07', 40, 'DEMO DINER', 'dining'),
+    ];
+    const paychecks = paychecksForMonth(txs, '2026-11', '2026-11-22');
+    expect(paychecks.filter((p) => p.status === 'received').map((p) => p.date)).toEqual(['2026-11-04', '2026-11-18']);
+    expect(otherIncome(txs, '2026-11', '2026-11-22', paychecks).map((i) => [i.date, i.name, i.amount, i.category])).toEqual([
+      ['2026-11-10', 'DEMO BANK BONUS', 1000, 'salary'],
+      ['2026-11-12', 'DEMO STORE', 25, 'refunds'],
+    ]);
   });
 });
